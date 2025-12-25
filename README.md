@@ -18,6 +18,43 @@ pip install -r requirements.txt
 python market_copilot.py
 ```
 
+---
+
+### Web dashboard (Flask + Plotly) — quick commands
+
+If you want the interactive browser dashboard with Plotly charts, run the Flask app below.
+
+Using a virtualenv (recommended):
+
+```bash
+# create and activate a venv (unix/mac)
+python3 -m venv .venv
+source .venv/bin/activate
+
+# install requirements
+pip install -r requirements.txt
+
+# run the dashboard on the default port (5000)
+python flask_app.py
+
+# or run on a custom port (example 5050)
+python flask_app.py --port=5050
+
+# or set via env var
+FLASK_RUN_PORT=5050 python flask_app.py
+```
+
+If you already have a virtualenv created by the project, run using its python explicitly:
+
+```bash
+./.venv/bin/python flask_app.py --port=5050
+```
+
+Notes:
+- The app prints the full URL it is serving (e.g. http://localhost:5050). If port 5000 is busy on your machine, use --port to choose another port.
+- The API endpoints the UI uses are `/api/analysis` and `/test` for quick connectivity checks.
+
+
 **That's it!** The system will fetch live SPY data and provide bias/confidence signals.
 
 > 💡 **Want more?** See the [How to Use](#-how-to-use) section below for interactive dashboards, live charts, and other interfaces.

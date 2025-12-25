@@ -8,6 +8,7 @@ Provides interactive charts with:
 """
 
 from flask import Flask, render_template, jsonify
+import sys
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
@@ -19,124 +20,100 @@ import time
 from market_copilot import MarketCopilot
 from indicators import calculate_all_indicators
 from config import DEFAULT_TICKER, REQUEST_DELAY, INDICATORS
+import threading
+from analyzers import OptionsWallAnalyzer, SentimentAnalyzer
 
 app = Flask(__name__)
 
-class OptionsWallAnalyzer:
-    """Analyzes options data to find support/resistance walls"""
-    
-    def __init__(self, ticker="SPY"):
-        self.ticker = ticker
-        
-    def get_options_walls(self, current_price):
-        """
-        Calculate likely options walls based on round numbers and volume
-        In production, this would use real options chain data
-        """
-        # Generate likely strike levels (round numbers near current price)
-        strikes = []
-        base = int(current_price / 5) * 5  # Round to nearest $5
-        
-        # Create strikes around current price
-        for i in range(-4, 5):
-            strikes.append(base + (i * 5))
-        
-        # Simulate wall strength (in production, use actual open interest)
-        walls = []
-        for strike in strikes:
-            distance = abs(strike - current_price)
-            # Stronger walls at round numbers and closer to price
-            strength = max(0, 100 - distance * 10) * (1 + (strike % 10 == 0) * 0.5)
-            
-            if strength > 30:
-                walls.append({
-                    'strike': strike,
-                    'strength': strength,
-                    'type': 'resistance' if strike > current_price else 'support'
-                })
-        
-        return sorted(walls, key=lambda x: x['strength'], reverse=True)
+# --- Simple in-memory cache for API payload to avoid blocking on-demand rebuilds ---
+_cache_lock = threading.Lock()
+_cached_payload = None
+_cached_at = None
+_is_building = False
+CACHE_TTL = 5  # seconds - how long cached payload is considered fresh
+REFRESH_INTERVAL = 5  # seconds - background refresh interval
 
-class SentimentAnalyzer:
-    """Analyzes market sentiment to generate buy/sell signals"""
-    
-    def __init__(self):
-        self.signals = []
-        
-    def analyze_sentiment(self, data_5m, indicators_5m, bias_5m, bias_15m):
-        """
-        Generate buy/sell signals based on multi-factor analysis
-        Returns list of signal points to display on chart
-        """
-        signals = []
-        
-        if len(data_5m) < 10:
-            return signals
-        
-        # Get recent candles
-        recent_data = data_5m.tail(20)
-        
-        for idx in range(5, len(recent_data)):
-            timestamp = recent_data.index[idx]
-            price = recent_data['Close'].iloc[idx]
-            
-            # Calculate signal strength based on multiple factors
-            signal_score = 0
-            
-            # Factor 1: Bias alignment
-            if bias_5m == bias_15m and bias_5m != 'Neutral':
-                signal_score += 30
-            
-            # Factor 2: Price vs VWAP
-            vwap = indicators_5m['VWAP'].iloc[idx] if idx < len(indicators_5m['VWAP']) else None
-            if vwap:
-                if price > vwap and bias_5m == 'Bullish':
-                    signal_score += 20
-                elif price < vwap and bias_5m == 'Bearish':
-                    signal_score += 20
-            
-            # Factor 3: EMA crossover
-            ema9 = indicators_5m['EMA_fast'].iloc[idx] if idx < len(indicators_5m['EMA_fast']) else None
-            ema21 = indicators_5m['EMA_slow'].iloc[idx] if idx < len(indicators_5m['EMA_slow']) else None
-            
-            if ema9 and ema21:
-                prev_ema9 = indicators_5m['EMA_fast'].iloc[idx-1]
-                prev_ema21 = indicators_5m['EMA_slow'].iloc[idx-1]
-                
-                # Bullish crossover
-                if prev_ema9 <= prev_ema21 and ema9 > ema21:
-                    signal_score += 50
-                # Bearish crossover
-                elif prev_ema9 >= prev_ema21 and ema9 < ema21:
-                    signal_score -= 50
-            
-            # Factor 4: RSI extremes
-            rsi = indicators_5m['RSI'].iloc[idx] if idx < len(indicators_5m['RSI']) else None
-            if rsi:
-                if rsi < 30 and bias_5m == 'Bullish':  # Oversold + bullish
-                    signal_score += 25
-                elif rsi > 70 and bias_5m == 'Bearish':  # Overbought + bearish
-                    signal_score -= 25
-            
-            # Generate signal if score is strong enough
-            if signal_score >= 60:
-                signals.append({
-                    'timestamp': timestamp,
-                    'price': price,
-                    'type': 'buy',
-                    'strength': min(100, signal_score),
-                    'label': f'BUY {signal_score}%'
-                })
-            elif signal_score <= -60:
-                signals.append({
-                    'timestamp': timestamp,
-                    'price': price,
-                    'type': 'sell',
-                    'strength': min(100, abs(signal_score)),
-                    'label': f'SELL {abs(signal_score)}%'
-                })
-        
-        return signals
+def build_and_cache_payload():
+    global _cached_payload, _cached_at, _is_building
+    # Prevent concurrent builds
+    if _is_building:
+        return
+    _is_building = True
+    try:
+        # Run the analysis logic and cache a lightweight payload for quick serving
+        copilot = MarketCopilot()
+        data_5m = copilot.data_fetcher.fetch_data("5m", "5d")
+        time.sleep(REQUEST_DELAY)
+        data_15m = copilot.data_fetcher.fetch_data("15m", "1mo")
+
+        if data_5m is None or data_15m is None or data_5m.empty or data_15m.empty:
+            return
+
+        data_5m_local = data_5m.tail(78)
+        data_15m_local = data_15m.tail(100)
+
+        indicators_5m = calculate_all_indicators(data_5m_local, INDICATORS)
+        indicators_15m = calculate_all_indicators(data_15m_local, INDICATORS)
+
+        bias_5m, conf_5m, notes_5m = copilot.bias_classifier.classify_bias(indicators_5m.iloc[-1])
+        bias_15m, conf_15m, notes_15m = copilot.bias_classifier.classify_bias(indicators_15m.iloc[-1])
+
+        copilot_data = {
+            'data_5m': data_5m_local,
+            'indicators_5m': indicators_5m,
+            'bias_5m': bias_5m.value,
+            'bias_15m': bias_15m.value
+        }
+
+        fig, walls, signals = create_chart(copilot_data, data_15m_local, indicators_15m)
+
+        current_volume = data_5m_local['Volume'].iloc[-1]
+        avg_volume = data_5m_local['Volume'].rolling(20).mean().iloc[-1]
+        volume_ratio = current_volume / avg_volume if avg_volume > 0 else 1.0
+
+        current_atr = indicators_5m['ATR'].iloc[-1]
+        avg_atr = indicators_5m['ATR'].rolling(20).mean().iloc[-1]
+        volatility_ratio = current_atr / avg_atr if avg_atr > 0 else 1.0
+
+        price_change = ((data_5m_local['Close'].iloc[-1] - data_5m_local['Close'].iloc[-5]) /
+                       data_5m_local['Close'].iloc[-5] * 100) if len(data_5m_local) >= 5 else 0
+
+        gamma_score = min(100, int((volume_ratio * 30 + volatility_ratio * 30 + abs(price_change) * 10)))
+
+        # Build a minimal payload to cache (avoid serializing full Plotly figure here)
+        try:
+            from market_hours import MarketHours
+            market_status = MarketHours.get_market_status()
+        except Exception:
+            market_status = {'status': 'Unknown', 'is_open': False}
+
+        payload = {
+            'bias_5m': {'bias': bias_5m.value, 'confidence': conf_5m},
+            'bias_15m': {'bias': bias_15m.value, 'confidence': conf_15m},
+            'indicators': {
+                'close': float(data_5m_local['Close'].iloc[-1]) if pd.notna(data_5m_local['Close'].iloc[-1]) else 0.0,
+                'vwap': float(indicators_5m['VWAP'].iloc[-1]) if pd.notna(indicators_5m['VWAP'].iloc[-1]) else 0.0,
+            },
+            'gamma_score': gamma_score,
+            'walls': walls[:5],
+            'signals': [{'timestamp': s['timestamp'].strftime('%Y-%m-%d %H:%M:%S'), 'price': s['price'], 'type': s['type'], 'strength': s['strength']} for s in signals[-10:]],
+            'market_status': market_status,
+            'latest': {
+                '5m': pd.Timestamp(data_5m_local.index[-1]).strftime('%Y-%m-%d %H:%M:%S'),
+                '15m': pd.Timestamp(data_15m_local.index[-1]).strftime('%Y-%m-%d %H:%M:%S')
+            },
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+
+        with _cache_lock:
+            _cached_payload = payload
+            _cached_at = time.time()
+
+    except Exception:
+        # Don't raise cache thread errors - leave cache as-is
+        pass
+    finally:
+        _is_building = False
 
 def create_chart(copilot_data, data_15m, indicators_15m):
     """Create interactive Plotly charts with all indicators and signals"""
@@ -180,6 +157,17 @@ def create_chart(copilot_data, data_15m, indicators_15m):
     
     # ===== 5-MINUTE CHART =====
     # Candlestick chart
+    # Prepare per-candle extra data for hover (VWAP, EMA9, EMA21, Volume)
+    try:
+        custom_5m = list(zip(
+            indicators_5m['VWAP'].tolist(),
+            indicators_5m['EMA_fast'].tolist(),
+            indicators_5m['EMA_slow'].tolist(),
+            data_5m['Volume'].tolist()
+        ))
+    except Exception:
+        custom_5m = [[None, None, None, None] for _ in range(len(data_5m))]
+
     fig.add_trace(
         go.Candlestick(
             x=data_5m.index,
@@ -192,6 +180,18 @@ def create_chart(copilot_data, data_15m, indicators_15m):
             decreasing_line_color='#ef5350',
             increasing_fillcolor='#26a69a',
             decreasing_fillcolor='#ef5350',
+            customdata=custom_5m,
+            hovertemplate=(
+                'Time: %{x}<br>'
+                'Open: $%{open:.2f}<br>'
+                'High: $%{high:.2f}<br>'
+                'Low: $%{low:.2f}<br>'
+                'Close: $%{close:.2f}<br><br>'
+                'VWAP: $%{customdata[0]:.2f}<br>'
+                'EMA9: $%{customdata[1]:.2f}<br>'
+                'EMA21: $%{customdata[2]:.2f}<br>'
+                'Volume: %{customdata[3]:,}<extra></extra>'
+            ),
             showlegend=True,
             visible=True
         ),
@@ -310,6 +310,16 @@ def create_chart(copilot_data, data_15m, indicators_15m):
     
     # ===== 15-MINUTE CHART =====
     # Candlestick chart
+    try:
+        custom_15m = list(zip(
+            indicators_15m['VWAP'].tolist(),
+            indicators_15m['EMA_fast'].tolist(),
+            indicators_15m['EMA_slow'].tolist(),
+            data_15m['Volume'].tolist()
+        ))
+    except Exception:
+        custom_15m = [[None, None, None, None] for _ in range(len(data_15m))]
+
     fig.add_trace(
         go.Candlestick(
             x=data_15m.index,
@@ -322,6 +332,18 @@ def create_chart(copilot_data, data_15m, indicators_15m):
             decreasing_line_color='#ef5350',
             increasing_fillcolor='#26a69a',
             decreasing_fillcolor='#ef5350',
+            customdata=custom_15m,
+            hovertemplate=(
+                'Time: %{x}<br>'
+                'Open: $%{open:.2f}<br>'
+                'High: $%{high:.2f}<br>'
+                'Low: $%{low:.2f}<br>'
+                'Close: $%{close:.2f}<br><br>'
+                'VWAP: $%{customdata[0]:.2f}<br>'
+                'EMA9: $%{customdata[1]:.2f}<br>'
+                'EMA21: $%{customdata[2]:.2f}<br>'
+                'Volume: %{customdata[3]:,}<extra></extra>'
+            ),
             showlegend=True,
             visible=True
         ),
@@ -546,6 +568,20 @@ def get_analysis():
                         'strength': s['strength']} for s in signals[-10:]],  # Last 10 signals
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
+        # Attach market status and latest candle timestamps for client-side freshness control
+        try:
+            from market_hours import MarketHours
+            market_status = MarketHours.get_market_status()
+            latest_5m = data_5m.index[-1]
+            latest_15m = data_15m.index[-1]
+            response['market_status'] = market_status
+            response['latest'] = {
+                '5m': pd.Timestamp(latest_5m).strftime('%Y-%m-%d %H:%M:%S'),
+                '15m': pd.Timestamp(latest_15m).strftime('%Y-%m-%d %H:%M:%S')
+            }
+        except Exception:
+            response['market_status'] = {'status': 'Unknown', 'is_open': False}
+            response['latest'] = {'5m': None, '15m': None}
         
         return jsonify(response)
         
@@ -553,13 +589,31 @@ def get_analysis():
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
+    import os
+
+    # Determine port from env vars or command-line before printing
+    port = int(os.environ.get('FLASK_RUN_PORT') or os.environ.get('FLASK_PORT') or 5000)
+    for arg in sys.argv[1:]:
+        if arg.startswith('--port=') or arg.startswith('-p='):
+            try:
+                port = int(arg.split('=', 1)[1])
+            except Exception:
+                pass
+
     print("=" * 80)
     print("  MARKET COPILOT - Web Interface")
     print("  Starting Flask server...")
     print("=" * 80)
-    print("\n📊 Access the dashboard at: http://localhost:5000")
+    print(f"\n📊 Access the dashboard at: http://localhost:{port}")
     print("🔄 Auto-refreshes every 2 seconds")
     print("⚡ Features: Live charts, Options walls, Buy/Sell signals, Gamma indicators")
     print("\nPress Ctrl+C to stop\n")
-    
-    app.run(debug=True, host='0.0.0.0', port=5000)
+
+    # Start background cache refresher
+    try:
+        refresher = threading.Thread(target=periodic_refresh, daemon=True)
+        refresher.start()
+    except Exception:
+        pass
+
+    app.run(debug=True, host='0.0.0.0', port=port)

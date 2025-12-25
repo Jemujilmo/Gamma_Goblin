@@ -356,11 +356,15 @@
         let timeSinceUpdate = 0;
         let lastUpdateTime = Date.now();
         let isFirstLoad = true;
+        let isFetching = false; // guard to prevent overlapping requests
 
         async function fetchAnalysis() {
+            if (isFetching) return;
+            isFetching = true;
+
             try {
                 document.getElementById('refreshText').innerHTML = '🔄 Updating...';
-                
+
                 const response = await fetch('/api/analysis');
                 const data = await response.json();
 
@@ -379,7 +383,7 @@
                 // Update indicators
                 document.getElementById('currentPrice').textContent = `$${data.indicators.close.toFixed(2)}`;
                 document.getElementById('rsi').textContent = data.indicators.rsi.toFixed(1);
-                
+
                 let rsiLabel = 'Neutral';
                 if (data.indicators.rsi > 70) rsiLabel = 'Overbought';
                 else if (data.indicators.rsi < 30) rsiLabel = 'Oversold';
@@ -391,26 +395,27 @@
                 updateGammaIndicator(data.gamma_score);
 
                 // Update chart (use Plotly.react for smooth updates without flickering)
-                const chartData = JSON.parse(data.chart);
+                const chartData = JSON.parse(data.chart || '{}');
                 const config = {responsive: true, displayModeBar: true};
-                const layout = chartData.layout;
-                
-                // Force full width
                 const chartContainer = document.getElementById('chart');
-                layout.width = chartContainer.offsetWidth;
-                layout.autosize = true;
-                
-                if (isFirstLoad) {
-                    Plotly.newPlot('chart', chartData.data, layout, config);
-                    isFirstLoad = false;
-                    
-                    // Add resize listener
-                    window.addEventListener('resize', function() {
-                        const newWidth = chartContainer.offsetWidth;
-                        Plotly.relayout('chart', {width: newWidth});
-                    });
+
+                if (!chartData.data) {
+                    console.warn('No chart data received');
                 } else {
-                    Plotly.react('chart', chartData.data, layout, config);
+                    const layout = chartData.layout || {};
+                    layout.autosize = true;
+                    layout.height = layout.height || Math.max(480, Math.floor(window.innerHeight * 0.6));
+
+                    if (isFirstLoad) {
+                        await Plotly.newPlot('chart', chartData.data, layout, config);
+                        isFirstLoad = false;
+                        window.addEventListener('resize', () => {
+                            try { Plotly.Plots.resize(document.getElementById('chart')); } catch(e){}
+                        });
+                    } else {
+                        await Plotly.react('chart', chartData.data, layout, config);
+                        try { Plotly.Plots.resize(document.getElementById('chart')); } catch(e){}
+                    }
                 }
 
                 // Update walls
@@ -431,6 +436,8 @@
 
             } catch (error) {
                 showError(`Failed to fetch data: ${error.message}`);
+            } finally {
+                isFetching = false;
             }
         }
 
@@ -526,8 +533,8 @@
         console.log('Starting initial fetch...');
         fetchAnalysis();
 
-        // Auto-refresh every 2 seconds for live updates
-        refreshInterval = setInterval(fetchAnalysis, 2000);
+    // Auto-refresh every 5 seconds to avoid overloading the server and overlapping work
+    refreshInterval = setInterval(fetchAnalysis, 5000);
 
         // Timer that counts up
         setInterval(() => {

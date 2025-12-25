@@ -357,7 +357,13 @@
         let lastUpdateTime = Date.now();
         let isFirstLoad = true;
 
+        let isFetching = false; // guard to prevent overlapping requests
+
         async function fetchAnalysis() {
+            // Prevent overlapping calls which can cause rendering glitches / server queue-up
+            if (isFetching) return;
+            isFetching = true;
+
             try {
                 document.getElementById('refreshText').innerHTML = '🔄 Updating...';
                 
@@ -369,8 +375,19 @@
                     return;
                 }
 
-                // Update timestamp
+                // Update timestamp and market status
                 document.getElementById('timestamp').textContent = data.timestamp;
+                const marketStatus = data.market_status || {status: 'Unknown', is_open: false};
+                const refreshIndicator = document.getElementById('refreshIndicator');
+                if (!marketStatus.is_open) {
+                    refreshIndicator.classList.add('pulse');
+                    document.getElementById('refreshText').innerHTML = `⏸️ Market ${marketStatus.status} - updates paused`;
+                    // display latest candle times
+                    if (data.latest) {
+                        document.getElementById('currentPrice').textContent += `\n(Last 5m: ${data.latest['5m']}, 15m: ${data.latest['15m']})`;
+                    }
+                    // do not continue with frequent polling; client will keep the interval but will skip updates
+                }
 
                 // Update bias cards
                 updateBiasCard('5m', data.bias_5m);
@@ -391,26 +408,35 @@
                 updateGammaIndicator(data.gamma_score);
 
                 // Update chart (use Plotly.react for smooth updates without flickering)
-                const chartData = JSON.parse(data.chart);
+                const chartData = JSON.parse(data.chart || '{}');
                 const config = {responsive: true, displayModeBar: true};
-                const layout = chartData.layout;
-                
-                // Force full width
                 const chartContainer = document.getElementById('chart');
-                layout.width = chartContainer.offsetWidth;
-                layout.autosize = true;
-                
-                if (isFirstLoad) {
-                    Plotly.newPlot('chart', chartData.data, layout, config);
-                    isFirstLoad = false;
-                    
-                    // Add resize listener
-                    window.addEventListener('resize', function() {
-                        const newWidth = chartContainer.offsetWidth;
-                        Plotly.relayout('chart', {width: newWidth});
-                    });
+
+                // Defensive checks
+                if (!chartData.data) {
+                    console.warn('No chart data received');
                 } else {
-                    Plotly.react('chart', chartData.data, layout, config);
+                    // Ensure layout exists and is responsive
+                    const layout = chartData.layout || {};
+                    layout.autosize = true;
+                    // Prefer letting Plotly handle sizing via responsive: true and resize
+                    // Provide a sensible height so the chart is visible on first render
+                    layout.height = layout.height || Math.max(480, Math.floor(window.innerHeight * 0.6));
+
+                    if (isFirstLoad) {
+                        await Plotly.newPlot('chart', chartData.data, layout, config);
+                        isFirstLoad = false;
+
+                        // Use Plotly's resize helper which is more reliable than manual relayout
+                        window.addEventListener('resize', () => {
+                            try { Plotly.Plots.resize(document.getElementById('chart')); } catch(e){}
+                        });
+                    } else {
+                        // Use react for efficient updates
+                        await Plotly.react('chart', chartData.data, layout, config);
+                        // Ensure plot fills the container after react
+                        try { Plotly.Plots.resize(document.getElementById('chart')); } catch(e){}
+                    }
                 }
 
                 // Update walls
@@ -428,6 +454,14 @@
                 timeSinceUpdate = 0;
                 lastUpdateTime = Date.now();
                 updateRefreshIndicator();
+
+                // If market is closed, stop aggressive polling; if open, ensure interval is active
+                if (marketStatus && !marketStatus.is_open) {
+                    // keep slow background timer running but avoid re-rendering charts
+                    // (isFetching guard already prevents overlapping requests)
+                    // Optionally change refresh interval to a longer period
+                    // No further action here; UI shows paused state
+                }
 
             } catch (error) {
                 showError(`Failed to fetch data: ${error.message}`);
@@ -526,8 +560,8 @@
         console.log('Starting initial fetch...');
         fetchAnalysis();
 
-        // Auto-refresh every 2 seconds for live updates
-        refreshInterval = setInterval(fetchAnalysis, 2000);
+    // Auto-refresh every 5 seconds to avoid overloading the server and overlapping work
+    refreshInterval = setInterval(fetchAnalysis, 5000);
 
         // Timer that counts up
         setInterval(() => {
