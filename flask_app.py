@@ -10,7 +10,7 @@ serializes them for client-side Plotly.js rendering, and exposes a small
 JSON API used by the dashboard front-end.
 """
 
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 import threading
 import time
 import sys
@@ -19,9 +19,11 @@ from datetime import datetime
 import pandas as pd
 
 from market_copilot import MarketCopilot
+from ticker_list import get_ticker_list
 from indicators import calculate_all_indicators
 from config import REQUEST_DELAY, INDICATORS
 from analyzers import OptionsWallAnalyzer, SentimentAnalyzer
+from options_data import OptionsDataFetcher
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 
@@ -80,11 +82,15 @@ def _serialize_fig(fig):
     return {'data': chart_data, 'layout': chart_layout}
 
 
-def _build_price_volume_figure(data, indicators, title, timeframe_label):
+def _build_price_volume_figure(data, indicators, title, timeframe_label, ticker='SPY', signals=None):
     """Build a two-row (price + volume) Plotly figure for one timeframe.
 
     Uses ATR and a small baseline to compute a display window so SPY's
     typically-small intraday moves remain visible.
+    
+    Args:
+        ticker: Stock ticker symbol (used in candlestick trace name)
+        signals: List of signal dicts with 'timestamp', 'type', 'price', 'strength'
     """
     if data is None or data.empty:
         return None
@@ -118,7 +124,13 @@ def _build_price_volume_figure(data, indicators, title, timeframe_label):
     y1 = last_close + half
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.02,
-                        row_heights=[0.75, 0.25], subplot_titles=(title, f'{timeframe_label} Volume'))
+                        row_heights=[0.80, 0.20], subplot_titles=(title, f'{timeframe_label} Volume'))
+
+    # Format times for hover as 12-hour with AM/PM
+    try:
+        formatted_times = [dt.strftime('%b %d, %Y, %I:%M %p') if hasattr(dt, 'strftime') else str(dt) for dt in data.index]
+    except Exception:
+        formatted_times = [str(dt) for dt in data.index]
 
     try:
         custom = list(zip(
@@ -131,8 +143,19 @@ def _build_price_volume_figure(data, indicators, title, timeframe_label):
         custom = [[None, None, None, None] for _ in range(len(data))]
 
     fig.add_trace(go.Candlestick(
-        x=data.index, open=data['Open'], high=data['High'], low=data['Low'], close=data['Close'],
-        name=f'SPY {timeframe_label}', customdata=custom
+        x=data.index, 
+        open=data['Open'], 
+        high=data['High'], 
+        low=data['Low'], 
+        close=data['Close'],
+        name=f'{ticker} {timeframe_label}',
+        text=formatted_times,
+        customdata=custom,
+        hovertemplate='<b>%{text}</b><br>' +
+                      'Open: $%{open:.2f}<br>' +
+                      'High: $%{high:.2f}<br>' +
+                      'Low: $%{low:.2f}<br>' +
+                      'Close: $%{close:.2f}<extra></extra>'
     ), row=1, col=1)
 
     if 'VWAP' in indicators:
@@ -148,42 +171,102 @@ def _build_price_volume_figure(data, indicators, title, timeframe_label):
     colors = ['#26a69a' if c >= o else '#ef5350' for c, o in zip(data['Close'], data['Open'])]
     fig.add_trace(go.Bar(x=data.index, y=data['Volume'], marker_color=colors, showlegend=False), row=2, col=1)
 
+    # Add buy/sell signals as markers
+    if signals:
+        buy_signals = [s for s in signals if s['type'] == 'buy']
+        sell_signals = [s for s in signals if s['type'] == 'sell']
+        
+        if buy_signals:
+            buy_times = [s['timestamp'] for s in buy_signals]
+            buy_prices = [s['price'] for s in buy_signals]
+            buy_strength = [s.get('strength', 50) for s in buy_signals]
+            
+            fig.add_trace(go.Scatter(
+                x=buy_times,
+                y=buy_prices,
+                mode='markers',
+                name='Buy Signal',
+                marker=dict(
+                    symbol='triangle-up',
+                    size=14,
+                    color='#00E676',
+                    line=dict(color='white', width=1)
+                ),
+                hovertemplate='<b>BUY</b><br>Price: $%{y:.2f}<br>Time: %{x}<extra></extra>',
+                showlegend=True
+            ), row=1, col=1)
+        
+        if sell_signals:
+            sell_times = [s['timestamp'] for s in sell_signals]
+            sell_prices = [s['price'] for s in sell_signals]
+            sell_strength = [s.get('strength', 50) for s in sell_signals]
+            
+            fig.add_trace(go.Scatter(
+                x=sell_times,
+                y=sell_prices,
+                mode='markers',
+                name='Sell Signal',
+                marker=dict(
+                    symbol='triangle-down',
+                    size=14,
+                    color='#FF1744',
+                    line=dict(color='white', width=1)
+                ),
+                hovertemplate='<b>SELL</b><br>Price: $%{y:.2f}<br>Time: %{x}<extra></extra>',
+                showlegend=True
+            ), row=1, col=1)
+
     fig.update_layout(template='plotly_dark', hovermode='closest', showlegend=True,
-                      margin=dict(l=60, r=30, t=40, b=40), autosize=True)
+                      margin=dict(l=60, r=30, t=40, b=40), autosize=True, height=700)
     fig.update_yaxes(range=[y0, y1], row=1, col=1, title_text='Price ($)')
     fig.update_yaxes(title_text='Volume', row=2, col=1)
-    fig.update_xaxes(title_text='Time', row=2, col=1)
+    fig.update_xaxes(title_text='Time', row=2, col=1, tickformat='%I:%M %p')
 
     return fig
 
 
-def create_chart(copilot_data, data_15m, indicators_15m, data_1m=None, indicators_1m=None):
+def create_chart(copilot_data, data_15m, indicators_15m, ticker="SPY", data_1m=None, indicators_1m=None):
     data_5m = copilot_data['data_5m']
     indicators_5m = copilot_data['indicators_5m']
     bias_5m = copilot_data.get('bias_5m')
     bias_15m = copilot_data.get('bias_15m')
 
     current_price = float(data_5m['Close'].iloc[-1])
-    walls = OptionsWallAnalyzer().get_options_walls(current_price)
+    
+    # Try real options data first, fallback to synthetic
+    try:
+        options_fetcher = OptionsDataFetcher(ticker)
+        walls = options_fetcher.get_options_walls(current_price)
+        iv_metrics = options_fetcher.get_iv_metrics()
+        pcr = options_fetcher.get_put_call_ratio()
+        gex = options_fetcher.get_gamma_exposure(current_price)
+    except Exception as e:
+        # Fallback to synthetic data
+        print(f"Options data error: {e}, using fallback")
+        walls = OptionsWallAnalyzer().get_options_walls(current_price)
+        iv_metrics = None
+        pcr = None
+        gex = None
+    
     signals = SentimentAnalyzer().analyze_sentiment(data_5m, indicators_5m, bias_5m, bias_15m)
 
     fig_1m = None
     if data_1m is not None and indicators_1m is not None:
-        fig_1m = _build_price_volume_figure(data_1m, indicators_1m, 'SPY 1-Minute Chart', '1m')
+        fig_1m = _build_price_volume_figure(data_1m, indicators_1m, f'{ticker} 1-Minute Chart', '1m', ticker, signals)
 
-    fig_5m = _build_price_volume_figure(data_5m, indicators_5m, 'SPY 5-Minute Chart', '5m')
-    fig_15m = _build_price_volume_figure(data_15m, indicators_15m, 'SPY 15-Minute Chart', '15m')
+    fig_5m = _build_price_volume_figure(data_5m, indicators_5m, f'{ticker} 5-Minute Chart', '5m', ticker, signals)
+    fig_15m = _build_price_volume_figure(data_15m, indicators_15m, f'{ticker} 15-Minute Chart', '15m', ticker, signals)
 
-    return {'1m': fig_1m, '5m': fig_5m, '15m': fig_15m}, walls, signals
+    return {'1m': fig_1m, '5m': fig_5m, '15m': fig_15m}, walls, signals, iv_metrics, pcr, gex
 
 
-def build_and_cache_payload():
+def build_and_cache_payload(ticker="SPY"):
     global _cached_payload, _cached_at, _is_building
     if _is_building:
         return
     _is_building = True
     try:
-        copilot = MarketCopilot()
+        copilot = MarketCopilot(ticker=ticker)
         data_5m = copilot.data_fetcher.fetch_data('5m', '5d')
         time.sleep(REQUEST_DELAY)
         data_15m = copilot.data_fetcher.fetch_data('15m', '1mo')
@@ -215,7 +298,7 @@ def build_and_cache_payload():
             data_1m = None
             indicators_1m = None
 
-        figs, walls, signals = create_chart(copilot_data, data_15m, indicators_15m, data_1m=data_1m, indicators_1m=indicators_1m)
+        figs, walls, signals, iv_metrics, pcr, gex = create_chart(copilot_data, data_15m, indicators_15m, ticker=ticker, data_1m=data_1m, indicators_1m=indicators_1m)
 
         # Provide a small indicators summary for the frontend which expects
         # data.indicators.close and data.indicators.rsi (and a gamma_score).
@@ -264,13 +347,16 @@ def build_and_cache_payload():
             'bias_5m': {'bias': bias_5m.value, 'confidence': conf_5m},
             'bias_15m': {'bias': bias_15m.value, 'confidence': conf_15m},
             'walls': walls[:5],
-            'signals': [{'timestamp': s['timestamp'].strftime('%Y-%m-%d %H:%M:%S'), 'price': s['price'], 'type': s['type'], 'strength': s['strength']} for s in signals[-10:]],
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'signals': [{'timestamp': s['timestamp'].strftime('%Y-%m-%d %I:%M:%S %p'), 'price': s['price'], 'type': s['type'], 'strength': s['strength']} for s in signals[-10:]],
+            'timestamp': datetime.now().strftime('%Y-%m-%d %I:%M:%S %p'),
             'indicators': {
                 'close': current_price,
                 'rsi': rsi_val,
             },
             'gamma_score': gamma_score,
+            'iv_metrics': iv_metrics,
+            'put_call_ratio': pcr,
+            'gamma_exposure': gex,
         }
 
         with _cache_lock:
@@ -292,7 +378,21 @@ def periodic_refresh():
 
 @app.route('/')
 def index():
+    """Main dashboard with multi-timeframe charts (1m/5m/15m)"""
     return render_template('index.html')
+
+
+@app.route('/indicator')
+def indicator():
+    """Simplified single-chart indicator view with persistent zoom"""
+    return render_template('indicator.html')
+
+
+@app.route('/api/tickers')
+def get_tickers():
+    """Return list of available tickers for dropdown"""
+    tickers = get_ticker_list()
+    return jsonify({'tickers': [{'symbol': s, 'name': n} for s, n in tickers]})
 
 
 @app.route('/api/analysis/debug')
@@ -332,15 +432,19 @@ def get_analysis_debug():
 @app.route('/api/analysis')
 def get_analysis():
     try:
-        # If cache is fresh, return it
+        # Get ticker from query parameter (default to SPY)
+        ticker = request.args.get('ticker', 'SPY').upper()
+        
+        # If cache is fresh for this ticker, return it
+        cache_key = f"{ticker}_cached_payload"
         with _cache_lock:
-            if _cached_payload and (time.time() - _cached_at) < CACHE_TTL:
-                return jsonify(_cached_payload)
+            if cache_key in globals() and (time.time() - _cached_at) < CACHE_TTL:
+                return jsonify(globals()[cache_key])
 
         # Build on-demand if cache empty or stale
         # Trigger a build; if another thread is already building, wait a short
         # time for it to finish to avoid returning an empty response.
-        build_and_cache_payload()
+        build_and_cache_payload(ticker)
 
         # small wait loop to allow background builder to populate cache (race
         # between request and background thread). Wait up to 5 seconds.
@@ -367,7 +471,7 @@ def get_analysis():
                     'bias_15m': {'bias': 'Unknown', 'confidence': 0.0},
                     'walls': [],
                     'signals': [],
-                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %I:%M:%S %p'),
                     'indicators': {'close': None, 'rsi': None},
                     'gamma_score': 0,
                 }

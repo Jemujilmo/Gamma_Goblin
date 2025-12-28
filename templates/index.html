@@ -36,6 +36,8 @@
             background: rgba(0, 0, 0, 0.3);
             border-radius: 15px;
             backdrop-filter: blur(10px);
+            position: relative;
+            z-index: 1000;
         }
 
         .header h1 {
@@ -66,6 +68,8 @@
             backdrop-filter: blur(10px);
             border: 2px solid rgba(255, 255, 255, 0.1);
             transition: transform 0.3s, border-color 0.3s;
+            position: relative;
+            z-index: 1;
         }
 
         .status-card:hover {
@@ -279,8 +283,14 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>📊 Market Copilot - SPY Analysis</h1>
-                <div style="display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;">
+            <h1>📊 Market Copilot - <span id="currentTicker">SPY</span> Analysis</h1>
+            <div style="display:flex;align-items:center;justify-content:center;gap:20px;flex-wrap:wrap;margin-top:15px;">
+                <div style="position:relative;z-index:9999;">
+                    <input type="text" id="tickerSearch" placeholder="Search ticker (e.g. AAPL, QQQ)..." 
+                           style="padding:10px 15px;border-radius:8px;border:2px solid rgba(255,255,255,0.3);background:rgba(0,0,0,0.5);color:white;font-size:1em;width:300px;" />
+                    <div id="tickerDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:rgba(20,20,20,0.98);border:2px solid rgba(255,255,255,0.3);border-radius:8px;margin-top:5px;max-height:400px;overflow-y:auto;z-index:10000;">
+                    </div>
+                </div>
                 <div class="timestamp" id="timestamp">Loading...</div>
             </div>
         </div>
@@ -317,8 +327,18 @@
                     <h3>RSI (14)</h3>
                     <div class="value" id="rsi">-</div>
                     <div class="label" id="rsiLabel">-</div>
+                </div>                
+                <div class="status-card">
+                    <h3>IV Rank</h3>
+                    <div class="value neutral" id="ivRank">--</div>
+                    <div class="label" id="ivLabel">Loading...</div>
                 </div>
-            </div>
+                
+                <div class="status-card">
+                    <h3>Put/Call Ratio</h3>
+                    <div class="value neutral" id="pcRatio">--</div>
+                    <div class="label" id="pcLabel">Neutral</div>
+                </div>            </div>
 
             <!-- Gamma Squeeze Indicator -->
             <div class="gamma-indicator">
@@ -333,9 +353,9 @@
 
             <!-- Main Charts: 1m (top), 5m (middle), 15m (bottom) -->
             <div class="chart-container">
-                <div id="chart1" style="margin-bottom: 12px;"></div>
-                <div id="chart5" style="margin-bottom: 12px;"></div>
-                <div id="chart15"></div>
+                <div id="chart1" style="margin-bottom: 12px; min-width: 100%;"></div>
+                <div id="chart5" style="margin-bottom: 12px; min-width: 100%;"></div>
+                <div id="chart15" style="min-width: 100%;"></div>
             </div>
 
             <!-- Grid for Walls and Signals -->
@@ -360,6 +380,8 @@
         let timeSinceUpdate = 0;
         let lastUpdateTime = Date.now();
         let isFirstLoad = true;
+        let currentTicker = 'SPY'; // Default ticker
+        let availableTickers = []; // Will be loaded from API
 
         let isFetching = false; // guard to prevent overlapping requests
         const savedChartRanges = {}; // store {chartId: {x: [from,to], y: [from,to]}}
@@ -378,6 +400,136 @@
             } catch(e) { console.debug('loadSavedChartRanges failed', e); }
         })();
 
+        // Load ticker list
+        async function loadTickers() {
+            try {
+                const response = await fetch('/api/tickers');
+                const data = await response.json();
+                availableTickers = data.tickers || [];
+            } catch(e) {
+                console.error('Failed to load tickers', e);
+            }
+        }
+
+        // Ticker search and dropdown
+        const tickerInput = document.getElementById('tickerSearch');
+        const tickerDropdown = document.getElementById('tickerDropdown');
+
+        tickerInput.addEventListener('input', function() {
+            const query = this.value.toUpperCase().trim();
+            
+            if (!query) {
+                // Show recent searches when input is empty
+                const recent = getRecentSearches();
+                if (recent.length > 0) {
+                    tickerDropdown.innerHTML = `
+                        <div style="padding:8px 12px;background:rgba(255,255,255,0.05);border-bottom:2px solid rgba(255,255,255,0.2);">
+                            <strong style="color:#FFD600;font-size:0.85em;">📌 RECENT SEARCHES</strong>
+                        </div>
+                    ` + recent.map(t => `
+                        <div style="padding:12px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.1);" 
+                             onmouseover="this.style.background='rgba(255,255,255,0.1)'" 
+                             onmouseout="this.style.background='transparent'"
+                             onclick="selectTicker('${t.symbol}', '${t.name}')">
+                            <strong style="color:#64B5F6;">${t.symbol}</strong> - ${t.name}
+                        </div>
+                    `).join('');
+                    tickerDropdown.style.display = 'block';
+                } else {
+                    tickerDropdown.style.display = 'none';
+                }
+                return;
+            }
+
+            const filtered = availableTickers.filter(t => 
+                t.symbol.startsWith(query) || t.name.toUpperCase().includes(query)
+            ).slice(0, 10);
+
+            if (filtered.length === 0) {
+                // Show manual entry option
+                tickerDropdown.innerHTML = `
+                    <div style="padding:12px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.1);" 
+                         onmouseover="this.style.background='rgba(255,255,255,0.1)'" 
+                         onmouseout="this.style.background='transparent'"
+                         onclick="selectTicker('${query}', 'Custom Ticker')">
+                        <strong style="color:#FFD600;">${query}</strong> - Use this ticker (not in list)
+                    </div>
+                `;
+                tickerDropdown.style.display = 'block';
+                return;
+            }
+
+            tickerDropdown.innerHTML = filtered.map(t => `
+                <div style="padding:12px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.1);hover:background:rgba(255,255,255,0.1);" 
+                     onmouseover="this.style.background='rgba(255,255,255,0.1)'" 
+                     onmouseout="this.style.background='transparent'"
+                     onclick="selectTicker('${t.symbol}', '${t.name}')">
+                    <strong style="color:#00E676;">${t.symbol}</strong> - ${t.name}
+                </div>
+            `).join('');
+            tickerDropdown.style.display = 'block';
+        });
+
+        // Show recent searches on focus
+        tickerInput.addEventListener('focus', function() {
+            if (!this.value.trim()) {
+                this.dispatchEvent(new Event('input'));
+            }
+        });
+
+        // Allow Enter key to use any ticker
+        tickerInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                const query = this.value.toUpperCase().trim();
+                if (query) {
+                    selectTicker(query, 'Custom Ticker');
+                }
+            }
+        });
+
+        function selectTicker(symbol, name) {
+            currentTicker = symbol;
+            document.getElementById('currentTicker').textContent = symbol;
+            tickerInput.value = '';
+            tickerDropdown.style.display = 'none';
+            
+            // Save to recent searches
+            saveRecentSearch(symbol, name);
+            
+            // Refresh data with new ticker
+            fetchAnalysis();
+        }
+
+        function saveRecentSearch(symbol, name) {
+            try {
+                let recent = JSON.parse(localStorage.getItem('spybot_recent_tickers') || '[]');
+                // Remove if already exists (to move to front)
+                recent = recent.filter(t => t.symbol !== symbol);
+                // Add to front
+                recent.unshift({symbol, name, timestamp: new Date().toISOString()});
+                // Keep only last 10
+                recent = recent.slice(0, 10);
+                localStorage.setItem('spybot_recent_tickers', JSON.stringify(recent));
+            } catch(e) {
+                console.debug('Failed to save recent search', e);
+            }
+        }
+
+        function getRecentSearches() {
+            try {
+                return JSON.parse(localStorage.getItem('spybot_recent_tickers') || '[]');
+            } catch(e) {
+                return [];
+            }
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', function(e) {
+            if (!tickerInput.contains(e.target) && !tickerDropdown.contains(e.target)) {
+                tickerDropdown.style.display = 'none';
+            }
+        });
+
     async function fetchAnalysis() {
             // Prevent overlapping calls which can cause rendering glitches / server queue-up
             if (isFetching) return;
@@ -386,7 +538,7 @@
             try {
                 document.getElementById('refreshText').innerHTML = '🔄 Updating...';
                 
-                const response = await fetch('/api/analysis');
+                const response = await fetch(`/api/analysis?ticker=${currentTicker}`);
                 const data = await response.json();
 
                 if (data.error) {
@@ -428,8 +580,51 @@
                 else if (rsiVal < 45) rsiLabel = 'Bearish';
                 document.getElementById('rsiLabel').textContent = rsiLabel;
 
+                // IV Rank
+                if (data.iv_metrics) {
+                    const ivRank = data.iv_metrics.iv_rank || 0;
+                    document.getElementById('ivRank').textContent = ivRank.toFixed(0);
+                    const ivEl = document.getElementById('ivRank');
+                    if (ivRank > 70) {
+                        ivEl.className = 'value bearish';
+                        document.getElementById('ivLabel').textContent = 'Very High - Sell Premium';
+                    } else if (ivRank > 50) {
+                        ivEl.className = 'value neutral';
+                        document.getElementById('ivLabel').textContent = 'Elevated - Theta Plays';
+                    } else if (ivRank > 30) {
+                        ivEl.className = 'value neutral';
+                        document.getElementById('ivLabel').textContent = 'Moderate';
+                    } else {
+                        ivEl.className = 'value bullish';
+                        document.getElementById('ivLabel').textContent = 'Low - Buy Premium';
+                    }
+                }
+
+                // Put/Call Ratio
+                if (data.put_call_ratio) {
+                    const pcr = data.put_call_ratio.volume_pcr || 1.0;
+                    document.getElementById('pcRatio').textContent = pcr.toFixed(2);
+                    const pcrEl = document.getElementById('pcRatio');
+                    const sentiment = data.put_call_ratio.sentiment || 'neutral';
+                    if (sentiment === 'bearish') {
+                        pcrEl.className = 'value bearish';
+                        document.getElementById('pcLabel').textContent = 'Bearish (More Puts)';
+                    } else if (sentiment === 'bullish') {
+                        pcrEl.className = 'value bullish';
+                        document.getElementById('pcLabel').textContent = 'Bullish (More Calls)';
+                    } else {
+                        pcrEl.className = 'value neutral';
+                        document.getElementById('pcLabel').textContent = 'Neutral';
+                    }
+                }
+
                 // Update gamma indicator
                 updateGammaIndicator(data.gamma_score || 0);
+
+                // Show content BEFORE creating charts so Plotly can measure proper width
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'none';
+                document.getElementById('content').style.display = 'block';
 
                 // Update three independent charts (1m, 5m, 15m)
                 const charts = [
@@ -453,7 +648,7 @@
 
                         const layout = payload.layout || {};
                         layout.autosize = true;
-                        layout.height = layout.height || Math.max(240, Math.floor(window.innerHeight * 0.25));
+                        layout.height = 700;
 
                         // If user previously zoomed/panned this chart, preserve the x/y ranges
                         try {
@@ -477,6 +672,16 @@
 
                         if (isFirstLoad) {
                             await Plotly.newPlot(c.id, payload.data || [], layout, config);
+                            // Double resize to ensure proper width (once immediate, once delayed)
+                            setTimeout(() => {
+                                requestAnimationFrame(() => {
+                                    try {
+                                        Plotly.Plots.resize(document.getElementById(c.id));
+                                    } catch(e) {
+                                        console.debug('Resize after newPlot failed', e);
+                                    }
+                                });
+                            }, 50);
                         } else {
                             await Plotly.react(c.id, payload.data || [], layout, config);
                             try { Plotly.Plots.resize(document.getElementById(c.id)); } catch(e){}
@@ -522,10 +727,11 @@
                 // Update signals
                 updateSignals(data.signals);
 
+                // Content already shown before charts rendered (moved earlier)
                 // Show content, hide loading
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('error').style.display = 'none';
-                document.getElementById('content').style.display = 'block';
+                // document.getElementById('loading').style.display = 'none';
+                // document.getElementById('error').style.display = 'none';
+                // document.getElementById('content').style.display = 'block';
 
                 // Reset timer
                 timeSinceUpdate = 0;
@@ -663,6 +869,7 @@
 
         // Initial fetch
         console.log('Starting initial fetch...');
+        loadTickers(); // Load ticker list
         fetchAnalysis();
 
     // Auto-refresh every 2 seconds for a snappier UI; isFetching prevents overlap

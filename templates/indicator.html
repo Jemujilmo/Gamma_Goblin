@@ -279,9 +279,16 @@
 <body>
     <div class="container">
         <div class="header">
-            <h1>📊 Market Copilot - SPY Analysis</h1>
-                <div style="display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;">
+            <h1>📊 Market Copilot - <span id="currentTicker">SPY</span> Analysis</h1>
+            <div style="display:flex;align-items:center;justify-content:center;gap:20px;flex-wrap:wrap;margin-top:15px;">
+                <div style="position:relative;z-index:9999;">
+                    <input type="text" id="tickerSearch" placeholder="Search ticker (e.g. AAPL, QQQ)..." 
+                           style="padding:10px 15px;border-radius:8px;border:2px solid rgba(255,255,255,0.3);background:rgba(0,0,0,0.5);color:white;font-size:1em;width:300px;" />
+                    <div id="tickerDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:rgba(20,20,20,0.98);border:2px solid rgba(255,255,255,0.3);border-radius:8px;margin-top:5px;max-height:400px;overflow-y:auto;z-index:10000;">
+                    </div>
+                </div>
                 <div class="timestamp" id="timestamp">Loading...</div>
+                <div id="marketStatus" style="padding:8px 16px;border-radius:20px;font-weight:bold;font-size:0.9em;"></div>
             </div>
         </div>
 
@@ -317,8 +324,18 @@
                     <h3>RSI (14)</h3>
                     <div class="value" id="rsi">-</div>
                     <div class="label" id="rsiLabel">-</div>
+                </div>                
+                <div class="status-card">
+                    <h3>IV Rank</h3>
+                    <div class="value neutral" id="ivRank">--</div>
+                    <div class="label" id="ivLabel">Loading...</div>
                 </div>
-            </div>
+                
+                <div class="status-card">
+                    <h3>Put/Call Ratio</h3>
+                    <div class="value neutral" id="pcRatio">--</div>
+                    <div class="label" id="pcLabel">Neutral</div>
+                </div>            </div>
 
             <!-- Gamma Squeeze Indicator -->
             <div class="gamma-indicator">
@@ -406,6 +423,44 @@
             else if (rsiVal < 45) rsiLabel = 'Bearish';
             document.getElementById('rsiLabel').textContent = rsiLabel;
 
+            // IV Rank
+            if (data.iv_metrics) {
+                const ivRank = data.iv_metrics.iv_rank || 0;
+                document.getElementById('ivRank').textContent = ivRank.toFixed(0);
+                const ivEl = document.getElementById('ivRank');
+                if (ivRank > 70) {
+                    ivEl.className = 'value bearish';
+                    document.getElementById('ivLabel').textContent = 'Very High - Sell Premium';
+                } else if (ivRank > 50) {
+                    ivEl.className = 'value neutral';
+                    document.getElementById('ivLabel').textContent = 'Elevated - Theta Plays';
+                } else if (ivRank > 30) {
+                    ivEl.className = 'value neutral';
+                    document.getElementById('ivLabel').textContent = 'Moderate';
+                } else {
+                    ivEl.className = 'value bullish';
+                    document.getElementById('ivLabel').textContent = 'Low - Buy Premium';
+                }
+            }
+
+            // Put/Call Ratio
+            if (data.put_call_ratio) {
+                const pcr = data.put_call_ratio.volume_pcr || 1.0;
+                document.getElementById('pcRatio').textContent = pcr.toFixed(2);
+                const pcrEl = document.getElementById('pcRatio');
+                const sentiment = data.put_call_ratio.sentiment || 'neutral';
+                if (sentiment === 'bearish') {
+                    pcrEl.className = 'value bearish';
+                    document.getElementById('pcLabel').textContent = 'Bearish (More Puts)';
+                } else if (sentiment === 'bullish') {
+                    pcrEl.className = 'value bullish';
+                    document.getElementById('pcLabel').textContent = 'Bullish (More Calls)';
+                } else {
+                    pcrEl.className = 'value neutral';
+                    document.getElementById('pcLabel').textContent = 'Neutral';
+                }
+            }
+
             updateGammaIndicator(data.gamma_score || 0);
 
             // Chart handling (single chart)
@@ -420,7 +475,7 @@
             if (chartData && chartData.data) {
                 const layout = chartData.layout || {};
                 layout.autosize = true;
-                layout.height = layout.height || Math.max(480, Math.floor(window.innerHeight * 0.6));
+                layout.height = layout.height || 800;
 
                 // apply saved ranges if present
                 try {

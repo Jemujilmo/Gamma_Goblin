@@ -24,6 +24,18 @@ python market_copilot.py
 
 If you want the interactive browser dashboard with Plotly charts, run the Flask app below.
 
+**Two Dashboard Modes Available:**
+
+1. **Multi-Timeframe View** (Default - http://localhost:5050/)
+   - Shows 1-minute, 5-minute, and 15-minute charts simultaneously
+   - Best for active trading and quick timeframe comparison
+   - All charts update in real-time
+
+2. **Single-Chart Indicator View** (http://localhost:5050/indicator)
+   - Focused single chart view with persistent zoom/pan
+   - Chart state saved in browser (survives page refresh)
+   - Cleaner interface for monitoring one timeframe
+
 Using a virtualenv (recommended):
 
 ```bash
@@ -49,6 +61,31 @@ If you already have a virtualenv created by the project, run using its python ex
 ```bash
 ./.venv/bin/python flask_app.py --port=5050
 ```
+
+**Web Dashboard Features:**
+- ✅ **Multi-ticker support** - Track any US stock or ETF (SPY, QQQ, AAPL, TSLA, etc.)
+  - Library of 30+ popular tickers (major ETFs, FAANG+, sector funds)
+  - Optional: Fetch complete Nasdaq/NYSE ticker lists (3000+ symbols)
+  - Switch tickers without additional API requests
+- ✅ **Real-time candlestick charts** with VWAP, EMA9, EMA21 overlays
+- ✅ **Volume bars** (color-coded green/red)
+- ✅ **Market status indicator** (🟢 Open / 🔴 Closed)
+- ✅ **Auto-refresh every 2 seconds** with time-since-update counter
+- ✅ **Real options data** from live options chains:
+  - Options walls (support/resistance from open interest)
+  - IV Rank & IV Percentile
+  - Put/Call ratio (volume & open interest based)
+  - Gamma exposure levels (GEX)
+- ✅ **Algorithmic entry signals** with multi-factor analysis
+  - 🟢 BUY signals (call entry points) - green upward triangles
+  - 🔴 SELL signals (put entry points) - red downward triangles
+  - 4-factor scoring: Bias + VWAP + EMA + RSI (0-100 points)
+  - Time-filtered: Only signals during prime hours (9:45 AM - 3:45 PM ET)
+  - Strength percentage displayed (60%+ threshold)
+- ✅ **Gamma squeeze indicator** (volume + volatility + momentum)
+- ✅ **5m and 15m bias** with confidence scoring
+- ✅ **Interactive Plotly charts** (zoom, pan, hover for details)
+- ✅ **12-hour time format** with AM/PM (standard, not military)
 
 Notes:
 - The app prints the full URL it is serving (e.g. http://localhost:5050). If port 5000 is busy on your machine, use --port to choose another port.
@@ -108,6 +145,9 @@ Market Copilot analyzes SPY across multiple timeframes to provide structured sig
 - **indicators.py**: Technical indicator calculations (EMA, RSI, ATR, VWAP)
 - **bias_classifier.py**: Market bias determination with confidence scoring
 - **signal_generator.py**: Structured signal generation and synthesis
+- **options_data.py**: Real options chain analysis (IV Rank, P/C Ratio, GEX, Walls)
+- **analyzers.py**: Lightweight fallback analyzers for Flask UI
+- **flask_app.py**: Web server with real-time charting API
 - **market_copilot.py**: Main orchestration and output formatting
 - **config.py**: Centralized configuration
 
@@ -186,9 +226,25 @@ You should see output like:
 
 ### Available Interfaces
 
-Market Copilot offers **3 different ways** to view your analysis:
+Market Copilot offers **5 different ways** to view your analysis:
 
-#### 1️⃣ **Basic Analysis** (Recommended for beginners)
+#### 1️⃣ **Web Dashboard** (Recommended - Interactive Browser UI)
+```bash
+python flask_app.py --port=5050
+```
+**Features:**
+- Real-time Plotly candlestick charts (5m, 15m, optional 1m)
+- Market status indicator (🟢 Open / 🔴 Closed)
+- Live options data: IV Rank, Put/Call Ratio, Options Walls (OI-based)
+- Gamma exposure levels and gamma squeeze indicator
+- Buy/sell signals with sentiment analysis
+- Auto-refresh every 2 seconds
+- Interactive zoom, pan, hover details
+- Two view modes:
+  - **Main Dashboard** (`http://localhost:5050/`) - Multi-timeframe view
+  - **Indicator View** (`http://localhost:5050/indicator`) - Single chart with persistent zoom
+
+#### 2️⃣ **Basic Analysis** (Terminal - Quick Snapshot)
 ```bash
 python market_copilot.py
 ```
@@ -196,17 +252,17 @@ python market_copilot.py
 - Shows bias, confidence, and indicators
 - One-time analysis snapshot
 
-#### 2️⃣ **Terminal Dashboard** (Interactive HUD)
+#### 3️⃣ **Terminal Dashboard** (Interactive HUD)
 ```bash
 python terminal_dashboard.py
 ```
-- Live updating dashboard with charts
+- Live updating dashboard with ASCII charts
 - Displays 5m and 15m timeframes
 - ASCII candlestick charts
 - Auto-refreshes every 60 seconds
 - Press `Ctrl+C` to exit
 
-#### 3️⃣ **Chart View** (Live Charts with Auto-Refresh)
+#### 4️⃣ **Chart View** (Live Charts with Auto-Refresh)
 ```bash
 # One-time chart display
 python chart_view.py
@@ -222,7 +278,7 @@ python chart_view.py --live 30
 - Connection and market status indicators
 - Gamma squeeze indicators
 
-#### 4️⃣ **Demo Mode** (No installation required!)
+#### 5️⃣ **Demo Mode** (No installation required!)
 ```bash
 # Random realistic scenario
 python demo_mode.py
@@ -471,6 +527,8 @@ copilot = MarketCopilot(ticker="SPY", data_source="alphavantage")
 
 ## 📚 Additional Documentation
 
+- **[WEB_DASHBOARD_GUIDE.md](WEB_DASHBOARD_GUIDE.md)**: Complete web dashboard reference - features, indicators, API endpoints, troubleshooting
+- **[IMPLEMENTATION_SUMMARY.md](IMPLEMENTATION_SUMMARY.md)**: Technical summary of latest features (options data, IV metrics, P/C ratio, GEX)
 - **[MARKET_HOURS.md](MARKET_HOURS.md)**: Market hours detection, data freshness, and trading session awareness
 - **[RATE_LIMITING.md](RATE_LIMITING.md)**: Detailed guide on API rate limiting, monitoring, and customization
 - **[QUICKREF.md](QUICKREF.md)**: Quick reference for common operations

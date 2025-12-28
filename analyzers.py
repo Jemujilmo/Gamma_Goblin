@@ -49,31 +49,115 @@ class SentimentAnalyzer:
         pass
 
     def analyze_sentiment(self, data_5m, indicators_5m, bias_5m, bias_15m):
+        """Generate buy/sell signals based on multiple factors.
+        
+        Analyzes the CURRENT (most recent) candle to determine entry points.
+        
+        Signal conditions:
+        - BUY: Bullish bias + price > VWAP + EMA9 > EMA21 + RSI 45-70
+        - SELL: Bearish bias + price < VWAP + EMA9 < EMA21 + RSI 30-55
+        
+        Time filters:
+        - Only signals between 9:45 AM - 3:45 PM ET
+        - Avoids market open volatility and closing noise
+        """
         signals = []
         try:
             last_close = float(data_5m['Close'].iloc[-1])
+            last_timestamp = data_5m.index[-1]
+            
+            # Time-based filter: Only signal during tradable hours
+            # Convert to US/Eastern time
+            try:
+                import pytz
+                et_tz = pytz.timezone('US/Eastern')
+                if hasattr(last_timestamp, 'tz_localize'):
+                    ts_et = last_timestamp.tz_localize('UTC').tz_convert(et_tz) if last_timestamp.tz is None else last_timestamp.tz_convert(et_tz)
+                else:
+                    ts_et = last_timestamp
+                
+                hour = ts_et.hour
+                minute = ts_et.minute
+                
+                # Block signals outside 9:45 AM - 3:45 PM ET
+                if hour < 9 or (hour == 9 and minute < 45):
+                    return []  # Before 9:45 AM - market opening volatility
+                if hour >= 15 and minute >= 45:
+                    return []  # After 3:45 PM - closing hour, low liquidity
+                if hour >= 16:
+                    return []  # Market closed
+            except Exception:
+                pass  # If timezone conversion fails, continue without filter
+            
+            # Get indicators for current candle
             last_vwap = float(indicators_5m['VWAP'].iloc[-1]) if 'VWAP' in indicators_5m else None
+            last_ema9 = float(indicators_5m['EMA_fast'].iloc[-1]) if 'EMA_fast' in indicators_5m else None
+            last_ema21 = float(indicators_5m['EMA_slow'].iloc[-1]) if 'EMA_slow' in indicators_5m else None
+            last_rsi = float(indicators_5m['RSI'].iloc[-1]) if 'RSI' in indicators_5m else None
 
             # Normalize bias strings
             b5 = (bias_5m or '').lower()
+            b15 = (bias_15m or '').lower()
+            
+            # Track signal strength (0-100)
+            buy_score = 0
+            sell_score = 0
+            
+            # Factor 1: Bias alignment (30 points)
+            if 'bull' in b5:
+                buy_score += 15
+            if 'bear' in b5:
+                sell_score += 15
+            if 'bull' in b15:
+                buy_score += 15
+            if 'bear' in b15:
+                sell_score += 15
+            
+            # Factor 2: Price vs VWAP (20 points)
             if last_vwap is not None:
-                if last_close > last_vwap and 'bull' in b5:
-                    signals.append({
-                        'timestamp': data_5m.index[-1],
-                        'price': last_close,
-                        'type': 'buy',
-                        'strength': 60,
-                        'label': 'Auto BUY'
-                    })
-                elif last_close < last_vwap and 'bear' in b5:
-                    signals.append({
-                        'timestamp': data_5m.index[-1],
-                        'price': last_close,
-                        'type': 'sell',
-                        'strength': 60,
-                        'label': 'Auto SELL'
-                    })
-        except Exception:
+                if last_close > last_vwap:
+                    buy_score += 20
+                else:
+                    sell_score += 20
+            
+            # Factor 3: EMA crossover (25 points)
+            if last_ema9 is not None and last_ema21 is not None:
+                if last_ema9 > last_ema21:
+                    buy_score += 25
+                else:
+                    sell_score += 25
+            
+            # Factor 4: RSI regime (25 points)
+            if last_rsi is not None:
+                if 45 <= last_rsi <= 70:  # Bullish zone but not overbought
+                    buy_score += 25
+                elif 30 <= last_rsi <= 55:  # Bearish zone but not oversold
+                    sell_score += 25
+                elif last_rsi > 70:  # Overbought - penalize buys
+                    buy_score -= 15
+                elif last_rsi < 30:  # Oversold - penalize sells
+                    sell_score -= 15
+            
+            # Generate signal if score > threshold (60%)
+            if buy_score >= 60:
+                signals.append({
+                    'timestamp': last_timestamp,
+                    'price': last_close,
+                    'type': 'buy',
+                    'strength': min(100, buy_score),
+                    'label': f'BUY ({buy_score}%)'
+                })
+            elif sell_score >= 60:
+                signals.append({
+                    'timestamp': last_timestamp,
+                    'price': last_close,
+                    'type': 'sell',
+                    'strength': min(100, sell_score),
+                    'label': f'SELL ({sell_score}%)'
+                })
+                
+        except Exception as e:
             # Be tolerant: return empty signals on any failure
+            print(f"Signal generation error: {e}")
             return []
         return signals
