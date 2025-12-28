@@ -217,6 +217,46 @@ def build_and_cache_payload():
 
         figs, walls, signals = create_chart(copilot_data, data_15m, indicators_15m, data_1m=data_1m, indicators_1m=indicators_1m)
 
+        # Provide a small indicators summary for the frontend which expects
+        # data.indicators.close and data.indicators.rsi (and a gamma_score).
+        try:
+            current_price = float(data_5m['Close'].iloc[-1])
+        except Exception:
+            current_price = None
+
+        try:
+            rsi_val = float(indicators_5m['RSI'].iloc[-1]) if 'RSI' in indicators_5m else None
+        except Exception:
+            rsi_val = None
+
+        # Compute a compact gamma_score similar to chart_view.py so the UI can display a gauge
+        try:
+            recent_volume = data_5m['Volume'].iloc[-5:].mean()
+            avg_volume = data_5m['Volume'].mean()
+            volume_ratio = (recent_volume / avg_volume) if avg_volume and avg_volume > 0 else 1.0
+        except Exception:
+            volume_ratio = 1.0
+
+        try:
+            if 'ATR' in indicators_5m:
+                current_atr = float(indicators_5m['ATR'].iloc[-1])
+                avg_atr = float(indicators_5m['ATR'].mean())
+                volatility_ratio = (current_atr / avg_atr) if avg_atr and avg_atr > 0 else 1.0
+            else:
+                volatility_ratio = 1.0
+        except Exception:
+            volatility_ratio = 1.0
+
+        try:
+            price_change_5m = ((data_5m['Close'].iloc[-1] / data_5m['Close'].iloc[-5]) - 1) * 100 if len(data_5m) >= 5 else 0
+        except Exception:
+            price_change_5m = 0
+
+        try:
+            gamma_score = min(100, int((volume_ratio * 30 + volatility_ratio * 30 + abs(price_change_5m) * 10)))
+        except Exception:
+            gamma_score = 0
+
         payload = {
             'chart_1m': _serialize_fig(figs.get('1m')) if figs.get('1m') is not None else None,
             'chart_5m': _serialize_fig(figs.get('5m')),
@@ -225,7 +265,12 @@ def build_and_cache_payload():
             'bias_15m': {'bias': bias_15m.value, 'confidence': conf_15m},
             'walls': walls[:5],
             'signals': [{'timestamp': s['timestamp'].strftime('%Y-%m-%d %H:%M:%S'), 'price': s['price'], 'type': s['type'], 'strength': s['strength']} for s in signals[-10:]],
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'indicators': {
+                'close': current_price,
+                'rsi': rsi_val,
+            },
+            'gamma_score': gamma_score,
         }
 
         with _cache_lock:
@@ -293,13 +338,39 @@ def get_analysis():
                 return jsonify(_cached_payload)
 
         # Build on-demand if cache empty or stale
+        # Trigger a build; if another thread is already building, wait a short
+        # time for it to finish to avoid returning an empty response.
         build_and_cache_payload()
+
+        # small wait loop to allow background builder to populate cache (race
+        # between request and background thread). Wait up to 5 seconds.
+        wait_start = time.time()
+        while True:
+            with _cache_lock:
+                if _cached_payload:
+                    break
+            if time.time() - wait_start > 5:
+                break
+            time.sleep(0.2)
 
         with _cache_lock:
             if _cached_payload:
                 resp = dict(_cached_payload)
             else:
-                return jsonify({'error': 'No data available'}), 500
+                # Return a safe, minimal payload to avoid 500s on first-hit
+                # (frontend will still show loading/placeholder values).
+                resp = {
+                    'chart_1m': None,
+                    'chart_5m': None,
+                    'chart_15m': None,
+                    'bias_5m': {'bias': 'Unknown', 'confidence': 0.0},
+                    'bias_15m': {'bias': 'Unknown', 'confidence': 0.0},
+                    'walls': [],
+                    'signals': [],
+                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    'indicators': {'close': None, 'rsi': None},
+                    'gamma_score': 0,
+                }
 
         # Enrich with market status / latest timestamps
         try:

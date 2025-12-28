@@ -54,6 +54,35 @@ Notes:
 - The app prints the full URL it is serving (e.g. http://localhost:5050). If port 5000 is busy on your machine, use --port to choose another port.
 - The API endpoints the UI uses are `/api/analysis` and `/test` for quick connectivity checks.
 
+<!-- Important notes callout -->
+<div style="background: #fff9db; border-left: 4px solid #ffd54a; padding: 12px; margin: 12px 0;">
+    <strong>⚠️ Important notes — things to consider / be aware of</strong>
+    <ul>
+        <li><strong>Cold-start behaviour</strong>: the server may return a transient HTTP 500 on the very first API request while background data is being built. The UI now uses safe fallbacks, but expect a short delay on the first load.</li>
+        <li><strong>Development server only</strong>: this project uses Flask's development server (debug + reloader). It's fine for local use only — do not expose it to production networks.</li>
+        <li><strong>Background builder</strong>: a background thread builds cached payloads. Check <code>dashboard.log</code> for any tracebacks; uncaught exceptions will appear there.</li>
+        <li><strong>Port & resource conflicts</strong>: if the dashboard cannot start, another process may be using the port. The helper script kills stale listeners on the configured port before starting; you can also use <code>lsof -iTCP:5050 -sTCP:LISTEN</code> to inspect.</li>
+        <li><strong>Logs</strong>: <code>dashboard.log</code> captures server output. Rotate or trim the file if you run the dashboard long-term.</li>
+        <li><strong>Virtualenv & background starts</strong>: avoid <code>source .venv/bin/activate</code> in backgrounded scripts — use the venv python directly (the project scripts do this for you) to prevent suspended jobs.</li>
+        <li><strong>Dependencies & reproducibility</strong>: pin exact versions in <code>requirements.txt</code> for reproducible runs; the helper installs requirements if missing.</li>
+        <li><strong>Rate limiting</strong>: the default request delay is 2s (configurable in <code>config.py</code>). Respect external API limits when changing it.</li>
+    <li><strong>Automated checks</strong>: a GitHub Actions smoke-test workflow has been added at <code>.github/workflows/smoke-test.yml</code>. It starts the Flask app, waits for <code>/api/analysis</code> to respond, validates basic JSON keys, and then stops the server. To run a local smoke test, use the helper script and then curl the API (example shown below).</li>
+    </ul>
+</div>
+
+To run the smoke test locally (quick):
+
+```bash
+# start the dashboard and wait for the API to be ready
+./scripts/start_dashboard_detach.sh 5050
+
+# check the API response
+curl -sS http://127.0.0.1:5050/api/analysis | jq . | head -n 40
+
+# stop the dashboard
+if [ -f dashboard.pid ]; then kill "$(cat dashboard.pid)" && rm -f dashboard.pid; fi
+```
+
 
 **That's it!** The system will fetch live SPY data and provide bias/confidence signals.
 

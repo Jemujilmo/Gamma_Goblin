@@ -280,7 +280,9 @@
     <div class="container">
         <div class="header">
             <h1>📊 Market Copilot - SPY Analysis</h1>
-            <div class="timestamp" id="timestamp">Loading...</div>
+                <div style="display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;">
+                <div class="timestamp" id="timestamp">Loading...</div>
+            </div>
         </div>
 
         <div class="refresh-indicator" id="refreshIndicator">
@@ -360,8 +362,23 @@
         let isFirstLoad = true;
 
         let isFetching = false; // guard to prevent overlapping requests
+        const savedChartRanges = {}; // store {chartId: {x: [from,to], y: [from,to]}}
+        const chartEventAttached = {}; // track attached listeners
 
-        async function fetchAnalysis() {
+        // Load persisted ranges from localStorage (if available)
+        (function loadSavedChartRanges(){
+            try {
+                const raw = localStorage.getItem('spybot_chart_ranges');
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && typeof parsed === 'object') {
+                        Object.assign(savedChartRanges, parsed);
+                    }
+                }
+            } catch(e) { console.debug('loadSavedChartRanges failed', e); }
+        })();
+
+    async function fetchAnalysis() {
             // Prevent overlapping calls which can cause rendering glitches / server queue-up
             if (isFetching) return;
             isFetching = true;
@@ -396,18 +413,23 @@
                 updateBiasCard('15m', data.bias_15m);
 
                 // Update indicators
-                document.getElementById('currentPrice').textContent = `$${data.indicators.close.toFixed(2)}`;
-                document.getElementById('rsi').textContent = data.indicators.rsi.toFixed(1);
+                // Guard indicator values which may be null on first load
+                const closeVal = data.indicators && data.indicators.close != null ? Number(data.indicators.close) : null;
+                const rsiVal = data.indicators && data.indicators.rsi != null ? Number(data.indicators.rsi) : null;
+                document.getElementById('currentPrice').textContent = closeVal != null ? `$${closeVal.toFixed(2)}` : '-';
+                document.getElementById('rsi').textContent = rsiVal != null ? rsiVal.toFixed(1) : '-';
                 
                 let rsiLabel = 'Neutral';
-                if (data.indicators.rsi > 70) rsiLabel = 'Overbought';
-                else if (data.indicators.rsi < 30) rsiLabel = 'Oversold';
-                else if (data.indicators.rsi > 55) rsiLabel = 'Bullish';
-                else if (data.indicators.rsi < 45) rsiLabel = 'Bearish';
+                if (rsiVal == null) {
+                    rsiLabel = 'N/A';
+                } else if (rsiVal > 70) rsiLabel = 'Overbought';
+                else if (rsiVal < 30) rsiLabel = 'Oversold';
+                else if (rsiVal > 55) rsiLabel = 'Bullish';
+                else if (rsiVal < 45) rsiLabel = 'Bearish';
                 document.getElementById('rsiLabel').textContent = rsiLabel;
 
                 // Update gamma indicator
-                updateGammaIndicator(data.gamma_score);
+                updateGammaIndicator(data.gamma_score || 0);
 
                 // Update three independent charts (1m, 5m, 15m)
                 const charts = [
@@ -433,6 +455,24 @@
                         layout.autosize = true;
                         layout.height = layout.height || Math.max(240, Math.floor(window.innerHeight * 0.25));
 
+                        // If user previously zoomed/panned this chart, preserve the x/y ranges
+                        try {
+                            const saved = savedChartRanges[c.id];
+                            if (saved && saved.x) {
+                                layout.xaxis = layout.xaxis || {};
+                                layout.xaxis.range = saved.x;
+                                // ensure autorange doesn't override preserved zoom
+                                if (layout.xaxis.autorange) delete layout.xaxis.autorange;
+                            }
+                            if (saved && saved.y) {
+                                layout.yaxis = layout.yaxis || {};
+                                layout.yaxis.range = saved.y;
+                                if (layout.yaxis.autorange) delete layout.yaxis.autorange;
+                            }
+                        } catch (e) {
+                            console.debug('Failed to apply saved ranges', e);
+                        }
+
                         const config = Object.assign({}, baseConfig, {displayModeBar: true, modeBarButtonsToRemove: []});
 
                         if (isFirstLoad) {
@@ -440,8 +480,36 @@
                         } else {
                             await Plotly.react(c.id, payload.data || [], layout, config);
                             try { Plotly.Plots.resize(document.getElementById(c.id)); } catch(e){}
-                            try { Plotly.relayout(document.getElementById(c.id), {'xaxis.autorange': true}); } catch(e){}
                         }
+
+                        // Re-apply persisted ranges immediately after render to avoid autorange overrides
+                        try {
+                            const saved = savedChartRanges[c.id];
+                            if (saved && saved['xaxis.range']) await Plotly.relayout(c.id, {'xaxis.range': saved['xaxis.range']});
+                            if (saved && saved['yaxis.range']) await Plotly.relayout(c.id, {'yaxis.range': saved['yaxis.range']});
+                        } catch(e) { /* non-fatal */ }
+
+                        // Attach relayout listener once to capture user zoom/pan
+                        try {
+                            const el = document.getElementById(c.id);
+                            if (el && !el.__spybot_rel_attached) {
+                                el.on('plotly_relayout', ev => {
+                                    try {
+                                        const saved = savedChartRanges[c.id] || {};
+                                        for (const k of Object.keys(ev || {})) {
+                                            if (/^xaxis|^yaxis/.test(k)) saved[k] = ev[k];
+                                        }
+                                        if (ev['xaxis.range[0]'] !== undefined && ev['xaxis.range[1]'] !== undefined) saved['xaxis.range'] = [ev['xaxis.range[0]'], ev['xaxis.range[1]']];
+                                        if (ev['yaxis.range[0]'] !== undefined && ev['yaxis.range[1]'] !== undefined) saved['yaxis.range'] = [ev['yaxis.range[0]'], ev['yaxis.range[1]']];
+                                        savedChartRanges[c.id] = saved;
+                                        try { localStorage.setItem('spybot_chart_ranges', JSON.stringify(savedChartRanges)); } catch(e){}
+                                    } catch(e){ console.debug('save range failed', e); }
+                                });
+                                el.__spybot_rel_attached = true;
+                            }
+                            // if the element was replaced by Plotly, ensure we re-attach on next update by resetting flag
+                            // (we'll set it false before attempting to attach on the next render)
+                        } catch(e) { console.debug('attach listener failed', e); }
                     } catch (err) {
                         console.error('Failed to render chart', c.id, err);
                     }
@@ -474,16 +542,31 @@
 
             } catch (error) {
                 showError(`Failed to fetch data: ${error.message}`);
+            } finally {
+                // Ensure the fetching guard is always cleared so the client
+                // will attempt subsequent requests even after an error.
+                isFetching = false;
             }
         }
 
         function updateBiasCard(timeframe, biasData) {
             const biasEl = document.getElementById(`bias${timeframe}`);
             const confEl = document.getElementById(`confidence${timeframe}`);
-            
-            biasEl.textContent = biasData.bias;
-            biasEl.className = `value ${biasData.bias.toLowerCase()}`;
-            confEl.textContent = `${biasData.label} (${(biasData.confidence * 100).toFixed(0)}%)`;
+            if (!biasData) {
+                biasEl.textContent = '-';
+                biasEl.className = 'value neutral';
+                confEl.textContent = '-';
+                return;
+            }
+
+            const biasText = biasData.bias || '-';
+            biasEl.textContent = biasText;
+            try { biasEl.className = `value ${String(biasText).toLowerCase()}`; } catch(e) { biasEl.className = 'value neutral'; }
+            if (typeof biasData.confidence === 'number') {
+                confEl.textContent = `${biasData.label || ''} (${(biasData.confidence * 100).toFixed(0)}%)`;
+            } else {
+                confEl.textContent = biasData.label || '-';
+            }
         }
 
         function updateGammaIndicator(score) {
@@ -491,8 +574,12 @@
             const scoreEl = document.getElementById('gammaScore');
             const statusEl = document.getElementById('gammaStatus');
 
-            bar.style.width = `${score}%`;
-            scoreEl.textContent = `${score}%`;
+            // clamp and normalize score to [0,100]
+            let s = Number(score) || 0;
+            if (!isFinite(s)) s = 0;
+            s = Math.max(0, Math.min(100, Math.round(s)));
+            bar.style.width = `${s}%`;
+            scoreEl.textContent = `${s}%`;
 
             if (score >= 70) {
                 statusEl.textContent = '⚡ HIGH GAMMA - Explosive moves likely';
@@ -508,42 +595,51 @@
 
         function updateWalls(walls) {
             const container = document.getElementById('wallsList');
-            if (walls.length === 0) {
+            if (!walls || !Array.isArray(walls) || walls.length === 0) {
                 container.innerHTML = '<p style="opacity: 0.7;">No significant walls detected</p>';
                 return;
             }
 
-            container.innerHTML = walls.map(wall => `
-                <div class="wall-item ${wall.type}">
+            container.innerHTML = walls.map(wall => {
+                const strike = (wall && typeof wall.strike === 'number') ? `$${wall.strike.toFixed(2)}` : '-';
+                const type = (wall && wall.type) ? wall.type : 'unknown';
+                const strength = (wall && typeof wall.strength === 'number') ? `${wall.strength.toFixed(0)}%` : '-';
+                return `
+                <div class="wall-item ${type}">
                     <div>
-                        <strong>$${wall.strike.toFixed(2)}</strong>
-                        <span style="opacity: 0.8; margin-left: 10px;">${wall.type.toUpperCase()}</span>
+                        <strong>${strike}</strong>
+                        <span style="opacity: 0.8; margin-left: 10px;">${String(type).toUpperCase()}</span>
                     </div>
                     <div style="opacity: 0.9;">
-                        Strength: ${wall.strength.toFixed(0)}%
+                        Strength: ${strength}
                     </div>
-                </div>
-            `).join('');
+                </div>`;
+            }).join('');
         }
 
         function updateSignals(signals) {
             const container = document.getElementById('signalsList');
-            if (signals.length === 0) {
+            if (!signals || !Array.isArray(signals) || signals.length === 0) {
                 container.innerHTML = '<p style="opacity: 0.7;">No recent signals</p>';
                 return;
             }
 
-            container.innerHTML = signals.reverse().map(signal => `
-                <div class="signal-item ${signal.type}">
+            container.innerHTML = signals.slice().reverse().map(signal => {
+                const price = (signal && typeof signal.price === 'number') ? `$${signal.price.toFixed(2)}` : '-';
+                const ts = (signal && signal.timestamp) ? signal.timestamp : '-';
+                const type = (signal && signal.type) ? signal.type : 'unknown';
+                const strength = (signal && typeof signal.strength === 'number') ? `${signal.strength}%` : '-';
+                return `
+                <div class="signal-item ${type}">
                     <div>
-                        <div><strong>$${signal.price.toFixed(2)}</strong></div>
-                        <div style="opacity: 0.7; font-size: 0.85em;">${signal.timestamp}</div>
+                        <div><strong>${price}</strong></div>
+                        <div style="opacity: 0.7; font-size: 0.85em;">${ts}</div>
                     </div>
-                    <div class="signal-badge ${signal.type}">
-                        ${signal.type.toUpperCase()} ${signal.strength}%
+                    <div class="signal-badge ${type}">
+                        ${String(type).toUpperCase()} ${strength}
                     </div>
-                </div>
-            `).join('');
+                </div>`;
+            }).join('');
         }
 
         function showError(message) {
@@ -569,16 +665,18 @@
         console.log('Starting initial fetch...');
         fetchAnalysis();
 
-    // Auto-refresh every 5 seconds to avoid overloading the server and overlapping work
-    refreshInterval = setInterval(fetchAnalysis, 5000);
+    // Auto-refresh every 2 seconds for a snappier UI; isFetching prevents overlap
+    refreshInterval = setInterval(fetchAnalysis, 2000);
 
-        // Timer that counts up
-        setInterval(() => {
-            timeSinceUpdate++;
-            updateRefreshIndicator();
-        }, 1000);
+    // Timer that counts up in 2s increments (UI expectation is 2s ticks)
+    setInterval(() => {
+        timeSinceUpdate += 2;
+        updateRefreshIndicator();
+    }, 2000);
         
         console.log('Auto-refresh started');
+
+    // No Reset button — savedChartRanges are applied automatically on render
     </script>
 </body>
 </html>

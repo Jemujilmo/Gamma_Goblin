@@ -1,0 +1,68 @@
+name: Smoke test - API
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  smoke:
+    name: smoke-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Create venv and install requirements
+        run: |
+          python -m venv .venv
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Start Flask app (background)
+        run: |
+          . .venv/bin/activate
+          nohup ./.venv/bin/python flask_app.py --port=5050 > dashboard.log 2>&1 &
+          echo $! > dashboard.pid
+
+      - name: Wait for /api/analysis (timeout 20s)
+        run: |
+          timeout=20
+          code=000
+          for i in $(seq 1 $timeout); do
+            code=$(curl -s -o /tmp/api.json -w "%{http_code}" http://127.0.0.1:5050/api/analysis || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "API responded with 200"
+              break
+            fi
+            sleep 1
+          done
+          if [ "$code" != "200" ]; then
+            echo "API did not respond (last HTTP code: $code)" >&2
+            echo "--- dashboard.log ---"
+            tail -n 200 dashboard.log || true
+            echo "--- /tmp/api.json ---"
+            cat /tmp/api.json || true
+            exit 1
+          fi
+
+      - name: Validate JSON payload contains expected keys
+        run: |
+          # basic check that payload is valid JSON and contains top-level keys
+          cat /tmp/api.json | python -c "import sys,json; d=json.load(sys.stdin); assert 'bias_5m' in d and 'bias_15m' in d; print('payload ok')"
+
+      - name: Cleanup
+        if: always()
+        run: |
+          if [ -f dashboard.pid ]; then
+            kill "$(cat dashboard.pid)" || true
+            rm -f dashboard.pid
+          fi
+          echo 'done'
