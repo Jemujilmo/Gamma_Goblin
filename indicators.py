@@ -94,6 +94,33 @@ def calculate_vwap(df: pd.DataFrame) -> pd.Series:
     return vwap
 
 
+def calculate_macd(data: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Dict[str, pd.Series]:
+    """
+    Calculate MACD (Moving Average Convergence Divergence).
+    
+    Args:
+        data: Price series (typically Close prices)
+        fast: Fast EMA period (default 12)
+        slow: Slow EMA period (default 26)
+        signal: Signal line period (default 9)
+    
+    Returns:
+        Dictionary with 'macd', 'signal', and 'histogram' Series
+    """
+    ema_fast = calculate_ema(data, fast)
+    ema_slow = calculate_ema(data, slow)
+    
+    macd_line = ema_fast - ema_slow
+    signal_line = calculate_ema(macd_line, signal)
+    histogram = macd_line - signal_line
+    
+    return {
+        'macd': macd_line,
+        'signal': signal_line,
+        'histogram': histogram
+    }
+
+
 def calculate_all_indicators(df: pd.DataFrame, config: Dict[str, int]) -> pd.DataFrame:
     """
     Calculate all technical indicators and add them to the DataFrame.
@@ -123,6 +150,12 @@ def calculate_all_indicators(df: pd.DataFrame, config: Dict[str, int]) -> pd.Dat
     
     # VWAP
     df['VWAP'] = calculate_vwap(df)
+    
+    # MACD
+    macd_data = calculate_macd(df['Close'])
+    df['MACD'] = macd_data['macd']
+    df['MACD_signal'] = macd_data['signal']
+    df['MACD_histogram'] = macd_data['histogram']
     
     return df
 

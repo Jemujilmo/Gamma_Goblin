@@ -481,8 +481,49 @@
                 const response = await fetch('/api/tickers');
                 const data = await response.json();
                 availableTickers = data.tickers || [];
+                console.log(`Loaded ${availableTickers.length} tickers from API`);
+                
+                // Ensure popular tickers are always available
+                const popularTickers = [
+                    {symbol: 'SPY', name: 'S&P 500 ETF'},
+                    {symbol: 'QQQ', name: 'Nasdaq 100 ETF'},
+                    {symbol: 'IWM', name: 'Russell 2000 ETF'},
+                    {symbol: 'AAPL', name: 'Apple Inc.'},
+                    {symbol: 'MSFT', name: 'Microsoft Corp.'},
+                    {symbol: 'NVDA', name: 'NVIDIA Corp.'},
+                    {symbol: 'TSLA', name: 'Tesla Inc.'},
+                    {symbol: 'AMZN', name: 'Amazon.com Inc.'},
+                    {symbol: 'META', name: 'Meta Platforms'}
+                ];
+                
+                // Add popular tickers if not already in list
+                const existingSymbols = new Set(availableTickers.map(t => t.symbol.toUpperCase()));
+                for (const ticker of popularTickers) {
+                    if (!existingSymbols.has(ticker.symbol.toUpperCase())) {
+                        availableTickers.unshift(ticker);
+                        console.log(`Added missing popular ticker: ${ticker.symbol}`);
+                    }
+                }
+                
+                console.log(`Total tickers available: ${availableTickers.length}`);
+                // Check if SPY is in the list
+                const hasSPY = availableTickers.some(t => t.symbol.toUpperCase() === 'SPY');
+                console.log(`SPY in ticker list: ${hasSPY}`);
             } catch(e) {
                 console.error('Failed to load tickers', e);
+                // Fallback to popular tickers only
+                availableTickers = [
+                    {symbol: 'SPY', name: 'S&P 500 ETF'},
+                    {symbol: 'QQQ', name: 'Nasdaq 100 ETF'},
+                    {symbol: 'IWM', name: 'Russell 2000 ETF'},
+                    {symbol: 'AAPL', name: 'Apple Inc.'},
+                    {symbol: 'MSFT', name: 'Microsoft Corp.'},
+                    {symbol: 'NVDA', name: 'NVIDIA Corp.'},
+                    {symbol: 'TSLA', name: 'Tesla Inc.'},
+                    {symbol: 'AMZN', name: 'Amazon.com Inc.'},
+                    {symbol: 'META', name: 'Meta Platforms'}
+                ];
+                console.log('Using fallback popular tickers only');
             }
         }
 
@@ -491,7 +532,7 @@
         const tickerDropdown = document.getElementById('tickerDropdown');
 
         tickerInput.addEventListener('input', function() {
-            const query = this.value.toUpperCase().trim();
+            const query = this.value.trim();
             
             if (!query) {
                 // Show recent searches when input is empty
@@ -516,9 +557,30 @@
                 return;
             }
 
-            const filtered = availableTickers.filter(t => 
-                t.symbol.startsWith(query) || t.name.toUpperCase().includes(query)
-            ).slice(0, 10);
+            const queryUpper = query.toUpperCase();
+            
+            // Filter and sort by priority: exact match > starts with > contains in name
+            const filtered = availableTickers.filter(t => {
+                const symbolUpper = t.symbol.toUpperCase();
+                const nameUpper = t.name.toUpperCase();
+                return symbolUpper.startsWith(queryUpper) || nameUpper.includes(queryUpper);
+            }).sort((a, b) => {
+                const aSymbol = a.symbol.toUpperCase();
+                const bSymbol = b.symbol.toUpperCase();
+                
+                // Exact match first
+                if (aSymbol === queryUpper) return -1;
+                if (bSymbol === queryUpper) return 1;
+                
+                // Then symbols that start with query
+                const aStarts = aSymbol.startsWith(queryUpper);
+                const bStarts = bSymbol.startsWith(queryUpper);
+                if (aStarts && !bStarts) return -1;
+                if (!aStarts && bStarts) return 1;
+                
+                // Then alphabetical
+                return aSymbol.localeCompare(bSymbol);
+            }).slice(0, 10);
 
             if (filtered.length === 0) {
                 // Show manual entry option
@@ -526,8 +588,8 @@
                     <div style="padding:12px;cursor:pointer;border-bottom:1px solid rgba(255,255,255,0.1);" 
                          onmouseover="this.style.background='rgba(255,255,255,0.1)'" 
                          onmouseout="this.style.background='transparent'"
-                         onclick="selectTicker('${query}', 'Custom Ticker')">
-                        <strong style="color:#FFD600;">${query}</strong> - Use this ticker (not in list)
+                         onclick="selectTicker('${queryUpper}', 'Custom Ticker')">
+                        <strong style="color:#FFD600;">${queryUpper}</strong> - Use this ticker (not in list)
                     </div>
                 `;
                 tickerDropdown.style.display = 'block';
@@ -780,16 +842,19 @@
                                     name: 'Zoom Y',
                                     icon: Plotly.Icons.zoomy,
                                     click: function(gd) {
-                                        Plotly.relayout(gd, {'dragmode': 'zoom'});
-                                        // Only allow vertical zoom (y-axis)
-                                        gd._fullLayout.dragmode = 'zoom';
-                                        gd._fullLayout.selectdirection = 'v';
-                                        // Show notification
-                                        const notification = document.createElement('div');
-                                        notification.textContent = 'Y-ZOOM MODE (drag up/down to zoom y-axis)';
-                                        notification.style.cssText = 'position:fixed;top:110px;right:20px;background:#00FF41;color:#000;padding:10px 20px;border:2px solid #00FF41;font-family:Courier New;font-weight:bold;z-index:10000;';
-                                        document.body.appendChild(notification);
-                                        setTimeout(() => notification.remove(), 2000);
+                                        if (payload.data && payload.data.length > 0) {
+                                            // Gather all x and y values from all traces
+                                            payload.data.forEach(trace => {
+                                                if (trace.x && trace.x.length > 0) xVals = xVals.concat(trace.x);
+                                                if (trace.y && trace.y.length > 0) yVals = yVals.concat(trace.y);
+                                            });
+                                            // Check if all y values are zero or non-finite
+                                            let yValid = yVals.filter(v => typeof v === 'number' && isFinite(v));
+                                            let allZeroOrInvalid = yValid.length === 0 || yValid.every(v => v === 0);
+                                            isEmpty = xVals.length === 0 || allZeroOrInvalid;
+                                            // Clear saved ranges if no data
+                                            if (savedChartRanges[c.id]) delete savedChartRanges[c.id];
+                                        }
                                     }
                                 },
                                 {
@@ -839,6 +904,76 @@
                             await Plotly.react(c.id, payload.data || [], layout, config);
                             try { Plotly.Plots.resize(document.getElementById(c.id)); } catch(e){}
                         }
+
+                        // --- PATCH: Smart auto-zoom for 1m chart (only on first load or no saved ranges) ---
+                        const chartDiv = document.getElementById(c.id);
+                        let isEmpty = false;
+                        let xVals = [];
+                        let yVals = [];
+                        if (payload.data && payload.data.length > 0) {
+                            // Gather all x and y values from all traces
+                            payload.data.forEach(trace => {
+                                if (trace.x && trace.x.length > 0) xVals = xVals.concat(trace.x);
+                                if (trace.y && trace.y.length > 0) yVals = yVals.concat(trace.y);
+                            });
+                            // Check if all y values are zero or non-finite
+                            let yValid = yVals.filter(v => typeof v === 'number' && isFinite(v));
+                            let allZeroOrInvalid = yValid.length === 0 || yValid.every(v => v === 0);
+                            isEmpty = xVals.length === 0 || allZeroOrInvalid;
+                        } else {
+                            isEmpty = true;
+                        }
+                        
+                        // Only apply auto-zoom if:
+                        // 1. Data is empty (show error message and autoscale)
+                        // 2. OR it's the first load AND no saved ranges exist
+                        const hasSavedRanges = saved && (saved['xaxis.range'] || saved['yaxis.range']);
+                        
+                        if (isEmpty) {
+                            // Show a message overlay if no data or all y are zero/invalid
+                            if (chartDiv && !chartDiv.querySelector('.no-data-msg')) {
+                                const msg = document.createElement('div');
+                                msg.className = 'no-data-msg';
+                                msg.textContent = 'No 1-minute data available for this ticker/time.';
+                                msg.style.cssText = 'position:absolute;left:50%;top:50px;transform:translateX(-50%);background:rgba(0,0,0,0.85);color:#00FF41;padding:10px 24px;font-size:18px;border-radius:8px;z-index:20;pointer-events:none;';
+                                chartDiv.style.position = 'relative';
+                                chartDiv.appendChild(msg);
+                                setTimeout(() => { if (msg.parentNode) msg.parentNode.removeChild(msg); }, 8000);
+                            }
+                            Plotly.relayout(chartDiv, {'xaxis.autorange': true, 'yaxis.autorange': true});
+                        } else if (c.id === 'chart1' && !hasSavedRanges && xVals.length > 0 && yVals.length > 0) {
+                            // Only auto-zoom 1m chart if no saved ranges (first load or user reset)
+                            let xSorted = xVals.map(x => new Date(x)).sort((a, b) => a - b);
+                            let xMax = xSorted[xSorted.length - 1];
+                            let xMin = xSorted[0];
+                            // Calculate 60 minutes before last x
+                            let x60min = new Date(xMax.getTime() - 60 * 60000);
+                            let xRangeStart = x60min > xMin ? x60min : xMin;
+                            // Y range: center around last valid price ±$2 (or ±$5 if price > $100)
+                            let ySorted = yVals.filter(v => typeof v === 'number' && isFinite(v) && v > 0 && v < 100000).sort((a, b) => a - b);
+                            let yLast = ySorted.length > 0 ? ySorted[ySorted.length - 1] : yVals[yVals.length - 1];
+                            // Only set custom y range if yLast is a valid, finite, reasonable price
+                            if (typeof yLast === 'number' && isFinite(yLast) && yLast > 1 && yLast < 10000) {
+                                let yBuffer = Math.abs(yLast) > 100 ? 5 : 2;
+                                let yMin = yLast - yBuffer;
+                                let yMax = yLast + yBuffer;
+                                // If yMin == yMax (flat price), expand a bit
+                                if (yMin === yMax) { yMin -= 1; yMax += 1; }
+                                Plotly.relayout(chartDiv, {
+                                    'xaxis.range': [xRangeStart, xMax],
+                                    'yaxis.range': [yMin, yMax]
+                                });
+                            } else {
+                                // Fallback: autoscale y-axis
+                                Plotly.relayout(chartDiv, {
+                                    'xaxis.range': [xRangeStart, xMax],
+                                    'yaxis.autorange': true
+                                });
+                            }
+                        }
+                        // If hasSavedRanges is true, the layout already has the saved ranges applied
+                        // and the chart will maintain the user's zoom/pan automatically
+                        // --- END PATCH ---
 
                         // Attach relayout listener to capture user zoom/pan changes
                         const el = document.getElementById(c.id);

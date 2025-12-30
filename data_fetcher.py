@@ -17,6 +17,7 @@ class DataFetcher:
     
     def __init__(self, ticker: str):
         self.ticker = ticker.upper()
+        print(f"[DataFetcher] Created for ticker: {self.ticker}")
     
     def fetch_data(self, interval: str, period: str = "5d") -> pd.DataFrame:
         """
@@ -53,6 +54,7 @@ class YahooFinanceDataFetcher(DataFetcher):
         """
         super().__init__(ticker)
         self.request_delay = request_delay
+        print(f"[YahooFinanceDataFetcher] Initialized for ticker: {self.ticker}")
     
     def _rate_limit(self) -> None:
         """

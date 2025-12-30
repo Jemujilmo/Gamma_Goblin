@@ -31,6 +31,7 @@ class MarketCopilot:
             data_source: Data source to use (default: yahoo)
             request_delay: Seconds between API requests (default: from config)
         """
+        print(f"[MarketCopilot] Initializing for ticker: {ticker}")
         self.ticker = ticker
         
         # Use config default if not specified
@@ -38,6 +39,7 @@ class MarketCopilot:
             request_delay = config.REQUEST_DELAY
         
         self.data_fetcher = get_data_fetcher(ticker, data_source, request_delay)
+        print(f"[MarketCopilot] Data fetcher ticker: {self.data_fetcher.ticker}")
         self.bias_classifier = BiasClassifier(
             rsi_bullish_threshold=config.BIAS_THRESHOLDS['rsi_bullish'],
             rsi_bearish_threshold=config.BIAS_THRESHOLDS['rsi_bearish']

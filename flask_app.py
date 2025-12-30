@@ -23,6 +23,7 @@ from ticker_list import get_ticker_list
 from indicators import calculate_all_indicators
 from config import REQUEST_DELAY, INDICATORS
 from analyzers import OptionsWallAnalyzer, SentimentAnalyzer
+from signal_backtester import SignalBacktester
 from options_data import OptionsDataFetcher
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
@@ -121,8 +122,14 @@ def _build_price_volume_figure(data, indicators, title, timeframe_label, ticker=
     y0 = last_close - half
     y1 = last_close + half
 
-    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.02,
-                        row_heights=[0.80, 0.20], subplot_titles=(title, f'{timeframe_label} Volume'))
+    # Create 3 subplots: main chart, volume, MACD
+    fig = make_subplots(
+        rows=3, cols=1, 
+        shared_xaxes=True, 
+        vertical_spacing=0.02,
+        row_heights=[0.65, 0.15, 0.20],
+        subplot_titles=(title, f'{timeframe_label} Volume', 'MACD')
+    )
 
     # Format times for hover as 12-hour with AM/PM
     try:
@@ -197,6 +204,36 @@ def _build_price_volume_figure(data, indicators, title, timeframe_label, ticker=
     colors = ['#26a69a' if c >= o else '#ef5350' for c, o in zip(data['Close'], data['Open'])]
     fig.add_trace(go.Bar(x=data.index, y=data['Volume'], marker_color=colors, showlegend=False), row=2, col=1)
 
+    # Add MACD subplot
+    if 'MACD' in indicators and 'MACD_signal' in indicators and 'MACD_histogram' in indicators:
+        # MACD Line and Signal Line
+        fig.add_trace(go.Scatter(
+            x=data.index,
+            y=indicators['MACD'],
+            name='MACD',
+            line=dict(color='#2196F3', width=1.5)
+        ), row=3, col=1)
+        
+        fig.add_trace(go.Scatter(
+            x=data.index,
+            y=indicators['MACD_signal'],
+            name='Signal',
+            line=dict(color='#FF9800', width=1.5)
+        ), row=3, col=1)
+        
+        # MACD Histogram (color-coded: green for positive, red for negative)
+        colors_macd = ['#26a69a' if h >= 0 else '#ef5350' for h in indicators['MACD_histogram']]
+        fig.add_trace(go.Bar(
+            x=data.index,
+            y=indicators['MACD_histogram'],
+            name='Histogram',
+            marker_color=colors_macd,
+            showlegend=True
+        ), row=3, col=1)
+        
+        # Add zero line for reference
+        fig.add_hline(y=0, line=dict(color='gray', width=1, dash='dash'), row=3, col=1)
+
     # Add buy/sell signals as markers
     if signals:
         buy_signals = [s for s in signals if s['type'] == 'buy']
@@ -250,7 +287,7 @@ def _build_price_volume_figure(data, indicators, title, timeframe_label, ticker=
         showlegend=True,
         margin=dict(l=60, r=30, t=40, b=40), 
         autosize=True, 
-        height=700,
+        height=900,  # Increased from 700 for MACD subplot
         dragmode='zoom',
         modebar_add=['v1hovermode', 'toggleSpikelines'],
         # Better grid and tick behavior
@@ -296,9 +333,17 @@ def _build_price_volume_figure(data, indicators, title, timeframe_label, ticker=
         gridwidth=1,
         gridcolor='rgba(128, 128, 128, 0.2)'
     )
+    fig.update_yaxes(
+        title_text='MACD', 
+        row=3, col=1, 
+        fixedrange=False,
+        showgrid=True,
+        gridwidth=1,
+        gridcolor='rgba(128, 128, 128, 0.2)'
+    )
     fig.update_xaxes(
         title_text='Time', 
-        row=2, col=1, 
+        row=3, col=1, 
         tickformat='%I:%M %p', 
         fixedrange=False,
         showgrid=True,
@@ -335,6 +380,11 @@ def create_chart(copilot_data, data_15m, indicators_15m, ticker="SPY", data_1m=N
         gex = None
     
     signals = SentimentAnalyzer().analyze_sentiment(data_5m, indicators_5m, bias_5m, bias_15m)
+    
+    # Run backtest analysis
+    backtester = SignalBacktester(lookforward_candles=5)
+    backtest_report = backtester.generate_report(data_5m, indicators_5m, signals)
+    print("\n" + backtest_report)
 
     fig_1m = None
     if data_1m is not None and indicators_1m is not None:
@@ -347,6 +397,7 @@ def create_chart(copilot_data, data_15m, indicators_15m, ticker="SPY", data_1m=N
 
 
 def build_and_cache_payload(ticker="SPY"):
+    print(f"[build_and_cache_payload] Building payload for ticker: {ticker}")
     global _ticker_cache
     
     # Initialize ticker cache entry if needed
@@ -397,6 +448,13 @@ def build_and_cache_payload(ticker="SPY"):
             data_5m = future_5m.result()
             data_15m = future_15m.result()
             data_1m = future_1m.result()
+        # Debug print statements for dataframes
+        print(f"[{ticker} 1m data] HEAD:\n", data_1m.head() if data_1m is not None else 'None')
+        print(f"[{ticker} 1m data] TAIL:\n", data_1m.tail() if data_1m is not None else 'None')
+        print(f"[{ticker} 5m data] HEAD:\n", data_5m.head() if data_5m is not None else 'None')
+        print(f"[{ticker} 5m data] TAIL:\n", data_5m.tail() if data_5m is not None else 'None')
+        print(f"[{ticker} 15m data] HEAD:\n", data_15m.head() if data_15m is not None else 'None')
+        print(f"[{ticker} 15m data] TAIL:\n", data_15m.tail() if data_15m is not None else 'None')
 
         if data_5m is None or data_5m.empty:
             print(f"No 5m data available for {ticker}")
