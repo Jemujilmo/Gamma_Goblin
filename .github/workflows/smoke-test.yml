@@ -31,21 +31,30 @@ jobs:
           . .venv/bin/activate
           nohup ./.venv/bin/python flask_app.py --port=5050 > dashboard.log 2>&1 &
           echo $! > dashboard.pid
+          sleep 2
+          # Check if process is still running
+          if ! kill -0 $(cat dashboard.pid) 2>/dev/null; then
+            echo "Flask app failed to start" >&2
+            cat dashboard.log
+            exit 1
+          fi
 
       - name: Wait for /api/analysis (timeout 20s)
         run: |
-          timeout=20
+          elapsed=0
+          max_wait=20
           code=000
-          for i in $(seq 1 $timeout); do
+          while [ $elapsed -lt $max_wait ]; do
             code=$(curl -s -o /tmp/api.json -w "%{http_code}" http://127.0.0.1:5050/api/analysis || echo 000)
             if [ "$code" = "200" ]; then
-              echo "API responded with 200"
+              echo "API responded with 200 after ${elapsed}s"
               break
             fi
             sleep 1
+            elapsed=$((elapsed + 1))
           done
           if [ "$code" != "200" ]; then
-            echo "API did not respond (last HTTP code: $code)" >&2
+            echo "API did not respond after ${max_wait}s (last HTTP code: $code)" >&2
             echo "--- dashboard.log ---"
             tail -n 200 dashboard.log || true
             echo "--- /tmp/api.json ---"
