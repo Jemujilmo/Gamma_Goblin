@@ -1,29 +1,610 @@
-# Market Copilot for SPY
+# Thanks Claude Sonnet for helping me make this ridiculous webapp that may or may not ever amount to anything but we'll see.
 
-A Python-based decision support system for SPY options trading that reconstructs technical context from raw market data—no screen scraping, no broker automation.
 
-## ⚡ Quick Start
+# SPY Trading Signal Generator
 
-**New users: Get up and running in 3 steps!**
+**A simple web app that shows you when to buy or sell SPY stock options using chart analysis.**
+This sort of started as something I wanted to use as a test for my options trading process. what it became is something I am not even sure if it works or not but I am going to try my best to actually use it and refine the data to reflect results. this is for testing purposes only, gambling is an addiction and if you think you suffer from a gambling addiction please seek the proper authorities to help you regain control and get the support you need.
 
-```bash
-# 1. Clone the repository
-git clone <your-repo-url>
-cd spytradebot
+This program looks at stock charts and tells you:
+- **Green triangles** = Good time to BUY
+- **Red triangles** = Good time to SELL
 
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Run the system
-python market_copilot.py
-```
-# terminal command is "cd "C:\Users\Kryst\Code Stuff\spytradebot"
-.venv\Scripts\python.exe flask_app.py --port=5050"
+It's like having an assistant that watches the charts for you 24/7.
+again these test results are not %100 accurate and all configurations cloned or forked from github are subject to change over time.
 ---
 
-### Web dashboard (Flask + Plotly) — quick commands
+## 🚀 How to Start the Program (First Time Ever)
 
-If you want the interactive browser dashboard with Plotly charts, run the Flask app below.
+**Follow these steps EXACTLY in order:**
+
+### Step 1: Verify Python and Dependencies are Installed
+
+**Before running the app for the first time, you need to install Python and dependencies.**
+
+If you haven't done this yet:
+1. Check if Python is installed: Open PowerShell and type `python --version`
+2. If Python is NOT installed, download it from [python.org](https://www.python.org/downloads/) (Python 3.8 or higher)
+3. See [INSTALL.md](INSTALL.md) for complete installation instructions
+
+**If you already have the `.venv` folder in the project directory, skip to Step 2.**
+
+### Step 2: Open PowerShell
+1. Press the **Windows key** on your keyboard
+2. Type **"PowerShell"**
+3. Click on **"Windows PowerShell"** (the blue one)
+4. A black/blue window will open - this is your command window
+
+### Step 3: Go to the Program Folder
+Copy this command and paste it into PowerShell (right-click to paste):
+
+```powershell
+cd "C:\Users\Kryst\Code Stuff\spytradebot"
+```
+
+Press **Enter**
+
+### Step 4: Start the Program
+Copy this command and paste it into PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe flask_app.py
+```
+
+Press **Enter**
+
+You'll see text scroll by. **Watch for these important messages:**
+```
+Access the dashboard at: http://localhost:5000
+* Running on http://127.0.0.1:5000
+```
+
+**IMPORTANT: Wait for the startup process to complete!** You'll see:
+- `[STARTUP] Pre-caching SPY data...`
+- `[SPY] Fetching 5m data...`
+- `[SPY] Fetching 15m data...`
+- `[SPY] Fetching 1m data...`
+- Then a backtest report will appear
+
+**Wait until you see the backtest report (about 10-30 seconds). Don't close this window!**
+
+### Step 5: Open Your Web Browser
+**ONLY AFTER the backtest report appears in PowerShell:**
+
+1. Open **Google Chrome** or **Microsoft Edge**
+2. In the address bar (where you type websites), copy and paste this:
+   ```
+   http://localhost:5000
+   ```
+3. Press **Enter**
+4. **Wait 5-10 seconds** for the page to load completely
+
+**You should now see charts with buy/sell signals!**
+
+**If you see "Failed to fetch data":**
+- Wait 10 more seconds and refresh the page (press F5)
+- Make sure the PowerShell window is still open and running
+- Check that you waited for the backtest report before opening the browser
+
+---
+
+## 📊 What You're Looking At
+
+When the page loads, you'll see three charts (1-minute, 5-minute, and 15-minute views):
+
+- **Green upward triangles** = BUY signals (stock might go up)
+- **Red downward triangles** = SELL signals (stock might go down)
+- **Yellow/Purple lines** = Moving averages (show the trend)
+- **Green/Red bars at bottom** = Volume (how much trading is happening)
+
+The charts update automatically every minute - you don't need to refresh the page.
+
+---
+
+## ❌ How to Stop the Program
+
+When you're done:
+1. Go back to the PowerShell window (the black/blue window)
+2. Press **Ctrl + C** on your keyboard
+3. The program will stop
+4. You can close the PowerShell window now
+
+---
+
+## 🔧 Troubleshooting (If Something Goes Wrong)
+
+### Problem: "Python was not found"
+**Solution:** Python isn't installed. Install Python 3.8 or higher from [python.org](https://www.python.org/downloads/)
+
+### Problem: "No such file or directory: .venv" or ".venv\Scripts\python.exe not found"
+**Solution:** Virtual environment not set up. Follow the complete installation guide in [INSTALL.md](INSTALL.md)
+
+### Problem: "No module named 'flask'" or other import errors
+**Solution:** Dependencies not installed. Run:
+```powershell
+.\.venv\Scripts\pip.exe install -r requirements.txt
+```
+
+### Problem: "Port already in use" or "Address already in use"
+**Solution:** 
+1. The program is already running in another PowerShell window - close it first
+2. Or another program is using port 5000. Close the conflicting program or use a different port:
+   ```powershell
+   .\.venv\Scripts\python.exe flask_app.py --port=5050
+   ```
+
+### Problem: "Failed to fetch data" in web browser
+**Solution:** 
+1. **You opened the browser too quickly!** Wait for the backtest report to appear in PowerShell (10-30 seconds after starting)
+2. Refresh the page (press F5) and wait 10 seconds
+3. Make sure the PowerShell window is still open and running (you didn't press Ctrl+C)
+4. Try closing the browser tab and opening a new one to `http://localhost:5000`
+
+### Problem: Charts aren't showing up or page is blank
+**Solution:** 
+1. **Wait longer!** The first data fetch takes 10-30 seconds
+2. ChWait for the startup messages** - you'll see:
+   - `Access the dashboard at: http://localhost:5000`
+   - `[STARTUP] Pre-caching SPY data...`
+   - Data fetching messages
+   - A backtest report with signal accuracy
+5. **ONLY AFTER seeing the backtest report**, open your browser and go to: `http://localhost:5000`
+6. **Wait 5-10 seconds** for charts to load on first visit
+7. **When done:** Press Ctrl+C in PowerShell to stop
+
+**Common Mistake:** Opening the browser too quickly causes "Failed to fetch data" errors. Always wait for the backtest report first!://localhost:5000`
+4. Try refreshing the page (press F5) and wait 10 seconds
+5. Check your internet connection
+
+### Problem: "Rate limit exceeded" or "429 Too Many Requests"
+**Solution:** Yahoo Finance is temporarily blocking requests. Wait 2-5 minutes, then refresh the page.
+
+### Problem: "Failed to fetch data" or blank charts after 1+ minute
+**Solution:**
+1. Check if the market is closed (data is from last trading session)
+2. Press Ctrl+C in PowerShell to stop the program
+3. Wait 5 seconds
+4. Restart: `.\.venv\Scripts\python.exe flask_app.py`
+5. Wait for backtest report, then open browser
+
+---
+
+## 📱 Daily Use (After First Setup)
+
+Every time you want to use the program:
+
+1. **Open PowerShell** (Windows key → type "PowerShell")
+2. **Navigate to folder:**
+   ```powershell
+   cd "C:\Users\Kryst\Code Stuff\spytradebot"
+   ```
+3. **Start program:**
+   ```powershell
+   .\.venv\Scripts\python.exe flask_app.py
+   ```
+4. **Open browser** and go to: `http://localhost:5000`
+5. **When done:** Press Ctrl+C in PowerShell to stop
+
+---
+
+## 🤖 Copy-Paste The entirety of this body of text Into Copilot for Help
+
+If you need help, copy the entire text below until line 147 and paste it into Copilot:
+
+```
+I'm trying to run a stock trading signal program on Windows. Here's what I need help with:
+
+PROGRAM DETAILS:
+- Name: SPY Trading Signal Generator
+- Location: C:\Users\Kryst\Code Stuff\spytradebot
+- Language: Python
+- Purpose: Shows buy/sell signals on stock charts in a web browser
+
+HOW TO RUN IT:
+1. Open PowerShell
+2. Run: cd "C:\Users\Kryst\Code Stuff\spytradebot"
+3. Run: .\.venv\Scripts\python.exe flask_app.py
+4. WAIT for backtest report to appear (10-30 seconds)
+5. THEN open browser to: http://localhost:5000
+6. Wait 5-10 seconds for charts to load
+
+IMPORTANT TIMING:
+- Don't open browser until you see the backtest report in PowerShell
+- First page load takes 5-10 seconds - be patient
+- If you see "Failed to fetch data", you opened browser too quickly - refresh and wait
+
+MY PROBLEM:
+[Describe what's happening - for example:]
+- "When I run the command, I get an error that says..."
+- "The charts show 'Failed to fetch data'..."
+- "I see a message about rate limiting..."
+- "Python was not found..."
+- "The page is blank or won't load..."
+
+WHAT I'VE TRIED:
+[List what you've already tried - for example:]
+- "I restarted my computer"
+- "I closed all PowerShell windows and tried again"
+- "I waited for the backtest report before opening browser"
+- "I waited 2 minutes and refreshed the page"
+
+Please help me fix this step-by-step in simple terms.
+```
+
+---
+
+## 📚 Technical Details (For Advanced Users)
+
+### Current System Capabilities (January 2026)
+
+**✅ Signal Generation Engine:**
+- **Multi-Timeframe Analysis**: 1m (entry timing), 5m (setup confirmation), 15m (trend direction)
+- **8-Condition Evaluation System**: 3 out of 8 conditions required for signal generation
+  - VWAP trend alignment (15m and 5m)
+  - EMA9/EMA21 positioning and crossover detection (golden cross/death cross)
+  - RSI momentum ranges (35-60 BUY, 40-65 SELL)
+  - MACD histogram direction and momentum shifts
+  - Volume confirmation (>1.05x average)
+  - Gamma score integration (>40 indicates high conviction)
+- **Smart Resistance Filter**: Blocks buys near resistance only when MACD shows weakness (<0.05)
+- **Mandatory Trend Alignment**: BUY requires price > VWAP, SELL requires price < VWAP
+- **Frequency Limiting**: 15-minute cooldown between signals (10 minutes for 6+ condition signals)
+- **Real-Time Backtesting**: Automatic accuracy reporting with profit/loss tracking
+
+**📊 Current Performance Metrics:**
+- Signal Accuracy: ~68.4% (4 BUY, 15 SELL on recent test data)
+- BUY Accuracy: 50% (improving from initial 33.3%)
+- SELL Accuracy: 73.3%
+- Signal Quality: Filters out low-conviction moves using multi-factor scoring
+
+**🎨 Web Interface Features:**
+- Interactive Plotly charts with auto-fit Y-axis (includes indicator values)
+- Real-time candlestick charts (1m, 5m, 15m timeframes)
+- Market status indicator (🟢 Open / 🔴 Closed / ⏸ Pre/Post Market)
+- Live options data: IV Rank, Put/Call Ratio, Options Walls, Gamma Exposure (GEX)
+- Signal markers with gamma scores: `BUY (6/8 conditions) [γ=66]`
+- Auto-refresh every 2 seconds with connection status
+- Multi-ticker support (SPY, QQQ, AAPL, TSLA, 30+ presets, full Nasdaq/NYSE library)
+- Volume bars (color-coded green/red)
+- MACD histogram and RSI indicators
+- Responsive design for desktop and mobile
+
+### What This Program Actually Does
+
+1. **Downloads live stock data** from Yahoo Finance (5m, 15m, 1m intervals)
+2. **Calculates indicators**: VWAP, EMA9, EMA21, RSI, MACD, ATR, Volume
+3. **Generates signals** using new_signal_logic.py:
+   - **BUY Conditions** (need 3/8):
+     1. 15m price above VWAP (trend confirmation)
+     2. 5m price above VWAP (setup confirmation)
+     3. 1m pullback to VWAP/EMA (entry timing)
+     4. RSI 35-60 rising (momentum building)
+     5. MACD histogram increasing (momentum shift)
+     6. Volume >1.05x average (conviction)
+     7. 15m MACD positive (trend support)
+     8. Gamma score ≥40 (high volatility/conviction)
+   - **SELL Conditions** (need 3/8):
+     1. 15m price below VWAP
+     2. 5m price below VWAP
+     3. Failed VWAP/EMA reclaim (rejection)
+     4. RSI 40-65 falling (momentum fading)
+     5. MACD histogram decreasing
+     6. Volume >1.05x average
+     7. 15m MACD negative
+     8. Gamma score ≥40
+   - **Momentum Overrides**: EMA crossovers and MACD zero-crossings trigger immediately
+4. **Quality filtering**:
+   - Volume must be >50% of 10-candle average
+   - Smart resistance filter (blocks buys near highs only when MACD weak)
+   - Mandatory VWAP alignment (no counter-trend signals)
+5. **Displays results** on interactive charts with zoom/pan/hover details
+
+### Signal Generation Logic
+
+**BUY signals appear when:**
+- 3+ standard conditions met OR strong override (golden cross, MACD reversal)
+- Price ABOVE VWAP (mandatory trend alignment)
+- NOT at resistance with weak MACD (<0.3% from 20-candle high AND MACD <0.05)
+- 15 minutes since last signal (or 10 minutes if 6+ conditions)
+
+**SELL signals appear when:**
+- 3+ standard conditions met OR strong override (death cross, MACD breakdown)
+- Price BELOW VWAP (mandatory trend alignment)
+- 15 minutes since last signal (or 10 minutes if 6+ conditions)
+
+**Example Signal Labels:**
+- `BUY (6/8 conditions) [γ=66]` - Strong buy with 66% gamma score
+- `SELL (4/8 conditions) [γ=41]` - Moderate sell with 41% gamma score
+- Higher condition count = higher conviction
+- Gamma >70 = Explosive move potential (gamma squeeze territory)
+
+### Gamma Score Calculation
+
+Gamma score (0-100%) combines three factors:
+- **Volume Ratio (30%)**: Recent volume / average volume
+- **Volatility Ratio (30%)**: Current ATR / average ATR  
+- **Price Momentum (40%)**: Absolute price change over last 5 candles
+
+**Interpretation:**
+- **70-100%** = ⚡ HIGH GAMMA - Explosive moves likely (institutional activity)
+- **40-69%** = ⚠️ ELEVATED - Increased volatility/conviction
+- **0-39%** = ✓ NORMAL - Standard market conditions
+
+### Files in This Program
+
+**Production Files (Active):**
+- `flask_app.py` - Main web server (starts the program)
+- `new_signal_logic.py` - **Primary signal generation** (multi-timeframe with gamma integration)
+- `signal_backtester.py` - Real-time accuracy tracking and profit/loss analysis
+- `data_fetcher.py` - Downloads stock data from Yahoo Finance
+- `indicators.py` - Calculates technical indicators (RSI, MACD, EMA, VWAP, ATR)
+- `market_copilot.py` - Analysis orchestration
+- `analyzers.py` - Options wall and sentiment analysis
+- `options_data.py` - Live options chain data (IV, P/C ratio, GEX)
+- `market_hours.py` - Market hours detection and data freshness
+- `ticker_list.py` - Multi-ticker support (Nasdaq/NYSE library)
+- `config.py` - Settings (timeframes, thresholds, rate limits)
+- `requirements.txt` - Required Python packages
+
+**Deprecated Files (Kept for backward compatibility):**
+- `bias_classifier.py` - ⚠️ Old bias classification (replaced by new_signal_logic.py)
+- `signal_generator.py` - ⚠️ Old signal logic (replaced by new_signal_logic.py)
+
+**Alternative Interfaces (Optional):**
+- `chart_view.py` - Standalone ASCII terminal chart viewer
+- `terminal_dashboard.py` - Rich terminal UI with HUD display
+
+**Testing & Development:**
+- `test_new_signals.py` - Standalone signal testing
+- `test_system.py` - System validation
+- `test_market_hours.py` - Market hours testing
+- `test_rate_limiting.py` - Rate limit testing
+- `examples.py` - Usage examples
+- `monitor_requests.py` - Rate limiting monitor
+
+**Scripts (Mac/Linux):**
+- `scripts/run_dashboard.sh` - Start Flask with auto venv setup
+- `scripts/start_dashboard_detach.sh` - Background Flask with health checks
+
+**Documentation:**
+- `README.md` - This file
+- `WEB_DASHBOARD_GUIDE.md` - Web interface complete reference
+- `MARKET_HOURS.md` - Market hours and data freshness
+- `RATE_LIMITING.md` - API rate limiting guide
+- `ARCHITECTURE.md` - System architecture
+- `CHANGELOG.md` - Version history
+- `QUICKREF.md` - Quick reference card
+
+### Configuration Settings
+
+Located in `config.py`:
+
+```python
+# Ticker
+DEFAULT_TICKER = "SPY"
+
+# Timeframes for analysis
+TIMEFRAMES = {
+    "short": "5m",   # Short-term execution
+    "medium": "15m"  # Structural bias
+}
+
+# Indicator parameters
+INDICATORS = {
+    "ema_fast": 9,      # Fast EMA period
+    "ema_slow": 21,     # Slow EMA period
+    "rsi_period": 14,   # RSI lookback
+    "atr_period": 14    # ATR calculation period
+}
+
+# Rate limiting (Yahoo Finance API)
+REQUEST_DELAY = 2.0              # Seconds between requests (~1800 req/hour)
+MAX_REQUESTS_PER_HOUR = 1800     # Safe buffer under Yahoo's ~2000/hour limit
+CACHE_DURATION = 60              # Cache data for 60 seconds
+
+# Signal generation thresholds (new_signal_logic.py)
+SIGNAL_CONDITIONS_REQUIRED = 3   # Out of 8 total conditions
+RSI_BUY_RANGE = (35, 60)        # RSI range for BUY signals
+RSI_SELL_RANGE = (40, 65)       # RSI range for SELL signals
+VOLUME_THRESHOLD = 1.05          # 1.05x average volume required
+GAMMA_THRESHOLD = 40             # Gamma score for elevated conviction
+RESISTANCE_PROXIMITY = 0.003     # 0.3% from high triggers resistance check
+MACD_WEAKNESS = 0.05            # MACD < 0.05 considered weak momentum
+SIGNAL_COOLDOWN_MINUTES = 15     # Minimum time between signals
+STRONG_SIGNAL_THRESHOLD = 6      # 6+ conditions = strong signal (10-min cooldown)
+```
+
+**Performance Tuning:**
+- Increase `REQUEST_DELAY` if hitting rate limits (safer, slower)
+- Decrease `SIGNAL_CONDITIONS_REQUIRED` for more signals (less accurate)
+- Adjust `GAMMA_THRESHOLD` for sensitivity (lower = more signals)
+- Modify `RSI_*_RANGE` to capture different momentum regimes
+
+### Rate Limiting (Why It Sometimes Stops Working)
+
+Yahoo Finance limits how many requests you can make:
+- **Limit**: ~2000 requests per hour
+- **Our setting**: 1000 requests per hour (safe buffer)
+- **What happens if exceeded**: "Rate limit" error, wait 2 minutes
+
+**The program automatically:**
+- Waits 3 seconds between data downloads
+- Caches data for 60 seconds (reuses instead of re-downloading)
+- Backs off exponentially if rate limited (5s → 10s → 20s delays)
+
+### System Requirements
+
+- **Operating System**: Windows 10 or 11
+- **Python**: 3.8 or higher
+- **RAM**: 2GB minimum
+- **Internet**: Stable connection (downloads data every minute)
+- **Browser**: Chrome, Edge, or Firefox
+
+### Installed Python Packages
+
+```
+yfinance - Downloads stock data
+flask - Web server
+pandas - Data processing
+numpy - Math calculations
+plotly - Interactive charts
+ta - Technical analysis indicators
+```
+
+---
+
+## 🎓 Understanding the Indicators
+
+### What the Lines Mean
+
+- **Purple dotted line (VWAP)**: Average price weighted by volume
+  - If price is ABOVE = bullish
+  - If price is BELOW = bearish
+
+- **Yellow line (EMA 9)**: 9-period moving average (fast)
+  - Shows short-term trend
+
+- **Orange line (EMA 21)**: 21-period moving average (slow)
+  - Shows medium-term trend
+  - When yellow crosses ABOVE orange = bullish
+  - When yellow crosses BELOW orange = bearish
+
+- **MACD Histogram (bottom panel)**: Momentum indicator
+  - Green bars = buying pressure
+  - Red bars = selling pressure
+  - Bigger bars = stronger momentum
+  - Small bars (< 0.15) = weak signal, program ignores
+
+### What the Signals Mean
+
+**Signal Strength Labels:**
+- **STRONG** (80%+): High confidence, trade these
+- **MODERATE** (65-79%): Medium confidence, be cautious
+- **WEAK** (45-64%): Low confidence, usually filtered out
+
+**The program only shows MODERATE or STRONG signals** to reduce noise.
+
+---
+
+## ⚠️ Important Warnings
+
+### This is NOT Financial Advice
+- Signals are suggestions, not guarantees
+- You can lose money trading
+- Always do your own research
+- Never invest money you can't afford to lose
+
+### Data Limitations
+- Data comes from Yahoo Finance (free but limited)
+- Sometimes Yahoo blocks us temporarily (rate limiting)
+- Market data can be delayed 15-20 minutes
+- Signals work best during market hours (9:30 AM - 4:00 PM ET)
+
+### Program Limitations
+- Runs on YOUR computer only (not in the cloud)
+- Requires internet connection
+- Must keep PowerShell window open while using
+- Does NOT place trades automatically (you must do it manually)
+
+---
+
+## ⚠️ Common Error Messages
+
+**"Python was not found"**
+→ Python isn't installed. Install Python 3.8+ from [python.org](https://www.python.org/downloads/)
+
+**"No such file or directory: .venv" or "cannot find .venv\Scripts\python.exe"**
+→ Virtual environment not created. See [INSTALL.md](INSTALL.md) for setup instructions
+
+**"No module named 'flask'"** or **"ModuleNotFoundError"**
+→ Dependencies not installed. Run: `.\.venv\Scripts\pip.exe install -r requirements.txt`
+
+**"Address already in use"**
+→ Program is already running in another window. Close it first, or use a different port with `--port=5050`
+
+**"Connection refused"** or **"Failed to connect"**
+→ Program isn't running. Make sure PowerShell window is open and you see "Running on http://127.0.0.1:5000"
+
+**"Failed to fetch data: Failed to fetch"** (in browser)
+→ You opened the browser too quickly! Wait for the backtest report in PowerShell, then refresh the page (F5)
+
+**"Rate limit exceeded"** or **"429 Too Many Requests"**
+→ Yahoo Finance blocked requests. Wait 2-5 minutes and try again. The app has built-in rate limiting but Yahoo can still block aggressive usage.
+
+**"Failed to fetch data"** (after waiting)
+→ Internet connection issue or Yahoo Finance is down. Check your internet and try restarting the app.
+
+**"Market is closed"** (warning message)
+→ Stock market isn't open. Data shows last trading session. This is normal outside market hours (9:30 AM - 4:00 PM ET).
+
+---
+
+## 📞 Getting Help
+
+### Option 1: ChatGPT
+Copy the template from the "Copy-Paste This Into ChatGPT" section above and describe your problem.
+
+### Option 2: Check the Logs
+If something isn't working:
+1. Look at the PowerShell window where the program is running
+2. Read the last few lines - they often explain what went wrong
+3. Copy any error messages and paste them into ChatGPT
+
+### Option 3: Restart Everything
+When in doubt:
+1. Press Ctrl+C in PowerShell (stops the program)
+2. Close PowerShell
+3. Wait 30 seconds
+4. Open PowerShell again and restart from Step 1
+
+---
+
+## 🎯 Quick Reference Card
+
+**START PROGRAM:**
+```powershell
+cd "C:\Users\Kryst\Code Stuff\spytradebot"
+.\.venv\Scripts\python.exe flask_app.py
+```
+**⏱️ Wait for backtest report (10-30 seconds) before opening browser!**
+
+**STOP PROGRAM:**
+- Press `Ctrl + C` in PowerShell
+
+**VIEW CHARTS:**
+- Open browser: `http://localhost:5000`
+- Wait 5-10 seconds for first load
+- If you see "Failed to fetch data", refresh (F5) and wait 10 seconds
+
+**IF "FAILED TO FETCH DATA":**
+- You opened browser too early → Wait for backtest report, then refresh
+- Connection issue → Check PowerShell is still running
+- Refresh page (F5) and wait 10 seconds
+
+**IF STUCK:**
+- Press Ctrl+C in PowerShell
+- Wait 5 seconds
+- Close PowerShell
+- Restart from beginning
+- Remember to wait for backtest report!
+
+**SIGNALS:**
+- 🟢 Green triangle = BUY
+- 🔴 Red triangle = SELL
+- No signals = Wait/Neutral
+
+**TIMING SUMMARY:**
+1. Start app → Wait 10-30 sec for backtest report
+2. Open browser → Wait 5-10 sec for page load
+3. Total: ~20-40 seconds from start to charts visible
+
+---
+
+**Made for absolute beginners. No prior experience required. If you can copy and paste, you can use this program.**
+
+---
+
+### Web Dashboard Features
 
 **Two Dashboard Modes Available:**
 
@@ -494,30 +1075,181 @@ Combines 5m (execution) and 15m (structure) analysis:
 - Expansion + Strong bias → Directional options
 - Compression + Neutral → Theta strategies
 
-## 🔮 Future Expansion Ideas
+## 🔮 Future Improvements & Roadmap
 
-The modular design supports easy addition of:
+### 🎨 UI/UX Enhancements (High Priority)
 
-- **More timeframes** (1m, 30m, 1h, daily)
-- **Additional indicators** (MACD, Bollinger Bands, Volume Profile)
-- **Options-specific metrics** (IV Rank, IV Percentile, Put/Call Ratio)
-- **Alerts system** (Discord, Telegram, email)
-- **Backtesting engine** (historical signal performance)
-- **Alternative data sources** (Alpha Vantage, Polygon.io, IEX Cloud)
-- **Multiple tickers** (QQQ, IWM, sector ETFs)
+**Modern Framework Migration:**
+- **React + TypeScript** frontend with Next.js or Vite
+  - Component-based architecture for maintainability
+  - Server-side rendering for faster initial load
+  - Hot module replacement for development
+- **Chart Library Upgrades:**
+  - **TradingView Lightweight Charts** - Industry-standard charting with superior performance
+  - **Apache ECharts** - Highly customizable with built-in technical indicators
+  - **Recharts** - React-native charts with excellent TypeScript support
+  - **Chart.js v4** - Lightweight alternative with real-time update optimization
+- **State Management**: Redux Toolkit or Zustand for predictable data flow
+- **Styling**: Tailwind CSS or Chakra UI for consistent, responsive design
+- **Real-time Updates**: WebSocket integration replacing polling (reduce API load)
 
-### Example: Swapping Data Sources
+**Dashboard Enhancements:**
+- Multi-monitor layout support (drag-and-drop chart arrangement)
+- Dark/light theme toggle with custom color schemes
+- Customizable alert system (push notifications, sounds, email/Discord/Telegram)
+- Watchlist management (save multiple tickers, quick switch)
+- Annotation tools (drawing support/resistance lines, notes on charts)
+- Heatmap views (sector performance, correlation matrix)
+- Options chain visualizer (3D gamma surface, IV skew)
 
-```python
-# In data_fetcher.py, add a new class:
-class AlphaVantageDataFetcher(DataFetcher):
-    def fetch_data(self, interval, period):
-        # Implementation here
-        pass
+### 📊 Analytics & Performance
 
-# Then in market_copilot.py:
-copilot = MarketCopilot(ticker="SPY", data_source="alphavantage")
-```
+**Backtesting Engine:**
+- Historical signal performance analysis (2019-present)
+- Win rate by timeframe, market condition, gamma level
+- Drawdown analysis and risk metrics (Sharpe ratio, max DD)
+- Monte Carlo simulation for strategy validation
+- Paper trading mode (track hypothetical trades)
+
+**Machine Learning Integration:**
+- LSTM/Transformer models for pattern recognition
+- Sentiment analysis from news/social media (Twitter, Reddit WSB)
+- Anomaly detection for unusual market behavior
+- Reinforcement learning for parameter optimization
+
+**Advanced Metrics:**
+- Order flow analysis (time & sales, market depth)
+- Dark pool activity indicators
+- Institutional positioning (13F filings integration)
+- Sector rotation tracking
+- Market breadth indicators (advance/decline, new highs/lows)
+
+### 🔧 Technical Improvements
+
+**Data Sources:**
+- **Polygon.io** integration (real-time tick data, extended hours)
+- **Alpha Vantage** fallback (redundancy if Yahoo fails)
+- **IEX Cloud** for fundamental data (P/E, earnings, dividends)
+- **CBOE** for official VIX and options data
+- Database caching (PostgreSQL/TimescaleDB for historical storage)
+
+**Performance Optimizations:**
+- Rust/Go microservices for indicator calculations (10-100x speedup)
+- Redis caching layer for sub-second response times
+- CDN integration for static assets
+- Lazy loading and code splitting (reduce initial bundle size)
+- Service worker for offline functionality
+
+**Signal Improvements:**
+- Adaptive thresholds based on market volatility (VIX-adjusted)
+- Machine learning confidence scoring (random forest/XGBoost)
+- Multi-asset correlation signals (SPY + QQQ + VIX combined)
+- Regime detection (trending vs mean-reverting markets)
+- Support/resistance level calculation (Fibonacci, pivot points)
+
+### 🌐 Platform Expansion
+
+**Multi-Asset Support:**
+- Forex pairs (EUR/USD, GBP/USD, etc.)
+- Crypto (BTC, ETH via Coinbase/Binance API)
+- Futures (ES, NQ, CL)
+- International equities (FTSE, DAX, Nikkei)
+
+**Broker Integration:**
+- TD Ameritrade API (auto-execute signals)
+- Interactive Brokers TWS (advanced order types)
+- Robinhood (retail integration)
+- Paper trading sandbox for testing
+
+**Mobile Applications:**
+- React Native app (iOS + Android)
+- Push notification alerts for signals
+- Voice commands (Siri/Google Assistant integration)
+- Apple Watch complications
+
+**Cloud Deployment:**
+- AWS/GCP serverless architecture
+- Auto-scaling for multiple users
+- Subscription tiers (free, premium, professional)
+- API marketplace (sell signals to other traders)
+
+### 🛡️ Risk Management Features
+
+**Position Sizing Calculator:**
+- Kelly Criterion optimization
+- Risk-per-trade percentage limits
+- Account drawdown protection
+- Correlation-based exposure limits
+
+**Stop-Loss & Take-Profit:**
+- Automatic level calculation based on ATR
+- Trailing stops (percentage or ATR-based)
+- Time-based exits (close EOD, max holding period)
+- Profit target laddering (scale out at 1R, 2R, 3R)
+
+**Portfolio Analytics:**
+- Multi-strategy performance tracking
+- Beta/alpha calculation vs SPY
+- Correlation matrix (avoid over-concentration)
+- Tax loss harvesting suggestions
+
+### 📚 Educational Content
+
+**Interactive Tutorials:**
+- Guided tours for new users
+- Video explanations of each indicator
+- Quiz system to test understanding
+- Strategy backtesting playground
+
+**Documentation Improvements:**
+- API documentation with Swagger/OpenAPI
+- Video tutorials (YouTube channel)
+- Community Discord server
+- Weekly strategy webinars
+
+### 🔐 Security & Compliance
+
+**Enterprise Features:**
+- Multi-user authentication (OAuth2, SSO)
+- Role-based access control (admin, trader, viewer)
+- Audit logging (all trades/signals tracked)
+- GDPR compliance for EU users
+- SOC 2 Type II certification for enterprise sales
+
+### 🚀 Deployment & DevOps
+
+**CI/CD Pipeline:**
+- GitHub Actions for automated testing
+- Docker containerization
+- Kubernetes orchestration for scaling
+- Blue-green deployments (zero downtime updates)
+- Automated rollback on errors
+
+**Monitoring & Observability:**
+- Prometheus + Grafana for metrics
+- Sentry for error tracking
+- Log aggregation (ELK stack or Datadog)
+- Uptime monitoring with PagerDuty alerts
+- Performance profiling (New Relic, Datadog APM)
+
+---
+
+**Priority Matrix:**
+
+| Feature | Impact | Effort | Priority |
+|---------|--------|--------|----------|
+| TradingView Charts | High | Medium | **P0** (Next Sprint) |
+| React Frontend | High | High | **P0** (Next Quarter) |
+| WebSocket Updates | High | Low | **P1** |
+| Backtesting Engine | High | High | **P1** |
+| ML Signal Scoring | High | Very High | **P2** |
+| Mobile App | Medium | High | **P2** |
+| Broker Integration | Medium | Very High | **P3** |
+| Multi-Asset Support | Medium | Medium | **P3** |
+
+**Current Status:** Production-ready signal generation with 68.4% accuracy. Focus is on UI modernization and performance optimization before adding new features.
+
+---
 
 ## ⚠️ Disclaimers
 

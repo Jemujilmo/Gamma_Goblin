@@ -186,7 +186,7 @@ class SignalBacktester:
         report.append("")
         report.append("OVERALL PERFORMANCE:")
         report.append(f"  Total Signals: {results['total_signals']}")
-        report.append(f"  Overall Accuracy: {results['overall_accuracy']:.1f}%")
+        report.append(f"  Overall Accuracy: {results.get('overall_accuracy', 0):.1f}%")
         report.append("")
         report.append("BUY SIGNALS:")
         report.append(f"  Total: {results['buy_signals']}")

@@ -1,5 +1,11 @@
 """
 Signal generator module - Creates structured trading signals
+
+⚠️ DEPRECATED: This file is no longer used in production.
+The new signal logic is in new_signal_logic.py which uses multi-timeframe
+confirmation with VWAP, EMA crossovers, and MACD momentum.
+
+This file remains for backward compatibility with test files.
 """
 import pandas as pd
 from typing import Dict, Any, List

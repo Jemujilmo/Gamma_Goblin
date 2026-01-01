@@ -124,25 +124,26 @@ def test_bias_classifier():
         return False
 
 
-def test_demo_mode():
-    """
-    Test demo mode (no dependencies required).
-    """
-    print("\n" + "="*70)
-    print("  TESTING DEMO MODE")
-    print("="*70 + "\n")
-    
-    try:
-        from demo_mode import run_demo
-        
-        print("Running bullish scenario demo...\n")
-        signal = run_demo("bullish")
-        
-        if signal and 'synthesis' in signal:
-            print("\n✓ Demo mode works correctly")
-            print(f"   Overall Bias: {signal['synthesis']['overall_bias']}")
-            print(f"   Confidence: {signal['synthesis']['average_confidence']:.1%}")
-            return True
+# REMOVED: demo_mode.py deleted (not needed for production)
+# def test_demo_mode():
+#     """
+#     Test demo mode (no dependencies required).
+#     """
+#     print("\n" + "="*70)
+#     print("  TESTING DEMO MODE")
+#     print("="*70 + "\n")
+#     
+#     try:
+#         from demo_mode import run_demo
+#         
+#         print("Running bullish scenario demo...\n")
+#         signal = run_demo("bullish")
+#         
+#         if signal and 'synthesis' in signal:
+#             print("\n✓ Demo mode works correctly")
+#             print(f"   Overall Bias: {signal['synthesis']['overall_bias']}")
+#             print(f"   Confidence: {signal['synthesis']['average_confidence']:.1%}")
+#             return True
         else:
             print("\n✗ Demo mode returned invalid signal")
             return False
@@ -170,8 +171,8 @@ def run_all_tests():
     # Test bias classifier
     results.append(("Bias Classifier", test_bias_classifier()))
     
-    # Test demo mode
-    results.append(("Demo Mode", test_demo_mode()))
+    # Test demo mode - REMOVED (demo_mode.py deleted)
+    # results.append(("Demo Mode", test_demo_mode()))
     
     # Summary
     print("\n" + "="*70)
@@ -192,8 +193,8 @@ def run_all_tests():
     if total_passed == total_tests:
         print("✅ All tests passed! System is ready to use.\n")
         print("Quick Start:")
-        print("  • Demo mode (no dependencies): python demo_mode.py")
-        print("  • Live mode (requires deps):   python market_copilot.py\n")
+        print("  • Web interface: python flask_app.py")
+        print("  • Live mode:     python market_copilot.py\\n")
         return 0
     else:
         print("⚠️  Some tests failed. Check errors above.\n")

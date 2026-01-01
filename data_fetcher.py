@@ -99,36 +99,58 @@ class YahooFinanceDataFetcher(DataFetcher):
             "time_since_last_request": current_time - cls._last_request_time if cls._last_request_time > 0 else 0
         }
     
-    def fetch_data(self, interval: str, period: str = "5d") -> pd.DataFrame:
+    def fetch_data(self, interval: str, period: str = "5d", max_retries: int = 3) -> pd.DataFrame:
         """
-        Fetch data from Yahoo Finance with rate limiting.
+        Fetch data from Yahoo Finance with rate limiting and exponential backoff.
         
         Args:
             interval: Candle interval (e.g., "5m", "15m", "1h", "1d")
             period: How much historical data to fetch
+            max_retries: Maximum number of retry attempts
         
         Returns:
             DataFrame with OHLCV data
         """
-        try:
-            # Apply rate limiting before making request
-            self._rate_limit()
-            
-            ticker_obj = yf.Ticker(self.ticker)
-            df = ticker_obj.history(period=period, interval=interval)
-            
-            if df.empty:
-                raise ValueError(f"No data returned for {self.ticker} with interval {interval}")
-            
-            # Ensure we have the expected columns
-            required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-            if not all(col in df.columns for col in required_columns):
-                raise ValueError(f"Missing required columns in data for {self.ticker}")
-            
-            return df
+        last_exception = None
         
-        except Exception as e:
-            raise RuntimeError(f"Failed to fetch data for {self.ticker}: {str(e)}")
+        for attempt in range(max_retries):
+            try:
+                # Apply rate limiting before making request
+                self._rate_limit()
+                
+                ticker_obj = yf.Ticker(self.ticker)
+                df = ticker_obj.history(period=period, interval=interval)
+                
+                if df.empty:
+                    raise ValueError(f"No data returned for {self.ticker} with interval {interval}")
+                
+                # Ensure we have the expected columns
+                required_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+                if not all(col in df.columns for col in required_columns):
+                    raise ValueError(f"Missing required columns in data for {self.ticker}")
+                
+                return df
+            
+            except Exception as e:
+                last_exception = e
+                error_msg = str(e).lower()
+                
+                # Check if it's a rate limit error
+                if 'too many requests' in error_msg or 'rate limit' in error_msg or '429' in error_msg:
+                    if attempt < max_retries - 1:
+                        # Exponential backoff: 5, 10, 20 seconds
+                        backoff_time = 5 * (2 ** attempt)
+                        print(f"[RATE LIMIT] Attempt {attempt + 1}/{max_retries} failed. Waiting {backoff_time}s before retry...")
+                        time.sleep(backoff_time)
+                        continue
+                    else:
+                        raise RuntimeError(f"Rate limited after {max_retries} attempts. Wait 60+ seconds before retrying.")
+                else:
+                    # Non-rate-limit error, raise immediately
+                    raise RuntimeError(f"Failed to fetch data for {self.ticker}: {str(e)}")
+        
+        # If we exhausted retries
+        raise RuntimeError(f"Failed to fetch data for {self.ticker} after {max_retries} attempts: {str(last_exception)}")
 
 
 def get_data_fetcher(ticker: str, source: str = "yahoo", request_delay: float = 2.0) -> DataFetcher:

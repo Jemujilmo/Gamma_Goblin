@@ -12,8 +12,11 @@ class MarketHours:
     Utility class to check market hours and data freshness.
     """
     
-    # US stock market timezone
+    # US stock market timezone (market logic always in ET)
     MARKET_TZ = pytz.timezone('America/New_York')
+    
+    # Display timezone (can be different from market timezone)
+    DISPLAY_TZ = None  # Will be set from config
     
     # Regular trading hours (Eastern Time)
     MARKET_OPEN = time(9, 30)   # 9:30 AM ET
@@ -22,6 +25,33 @@ class MarketHours:
     # Pre-market and after-hours
     PREMARKET_OPEN = time(4, 0)   # 4:00 AM ET
     AFTERHOURS_CLOSE = time(20, 0)  # 8:00 PM ET
+    
+    @classmethod
+    def set_display_timezone(cls, tz_name: str):
+        """
+        Set the display timezone for formatting timestamps.
+        
+        Args:
+            tz_name: Timezone name (e.g., 'America/Chicago' for Central Time)
+        """
+        cls.DISPLAY_TZ = pytz.timezone(tz_name)
+    
+    @classmethod
+    def to_display_time(cls, dt: datetime) -> datetime:
+        """
+        Convert a datetime to display timezone.
+        
+        Args:
+            dt: Datetime to convert (should be timezone-aware)
+            
+        Returns:
+            Datetime in display timezone
+        """
+        if cls.DISPLAY_TZ is None:
+            return dt
+        if dt.tzinfo is None:
+            dt = cls.MARKET_TZ.localize(dt)
+        return dt.astimezone(cls.DISPLAY_TZ)
     
     @classmethod
     def get_market_time(cls) -> datetime:

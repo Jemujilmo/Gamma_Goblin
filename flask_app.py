@@ -15,25 +15,31 @@ import threading
 import time
 import sys
 from datetime import datetime
+import pytz
 
 import pandas as pd
 
 from market_copilot import MarketCopilot
 from ticker_list import get_ticker_list
 from indicators import calculate_all_indicators
-from config import REQUEST_DELAY, INDICATORS
-from analyzers import OptionsWallAnalyzer, SentimentAnalyzer
+from config import REQUEST_DELAY, INDICATORS, DISPLAY_TIMEZONE, CACHE_DURATION
+from market_hours import MarketHours
+from analyzers import OptionsWallAnalyzer
 from signal_backtester import SignalBacktester
 from options_data import OptionsDataFetcher
+from new_signal_logic import generate_multi_timeframe_signals
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
+
+# Initialize display timezone
+MarketHours.set_display_timezone(DISPLAY_TIMEZONE)
 
 app = Flask(__name__)
 
 # Lightweight cache for API payloads (per-ticker)
 _cache_lock = threading.Lock()
 _ticker_cache = {}  # {ticker: {'payload': {...}, 'cached_at': timestamp, 'is_building': bool}}
-CACHE_TTL = 5  # seconds
+CACHE_TTL = CACHE_DURATION  # Use configured cache duration (60 seconds)
 
 
 def _serializable_value(v):
@@ -84,8 +90,7 @@ def _serialize_fig(fig):
 def _build_price_volume_figure(data, indicators, title, timeframe_label, ticker='SPY', signals=None):
     """Build a two-row (price + volume) Plotly figure for one timeframe.
 
-    Uses ATR and a small baseline to compute a display window so SPY's
-    typically-small intraday moves remain visible.
+    Auto-fits Y-axis to recent price action for better visibility.
     
     Args:
         ticker: Stock ticker symbol (used in candlestick trace name)
@@ -94,33 +99,42 @@ def _build_price_volume_figure(data, indicators, title, timeframe_label, ticker=
     if data is None or data.empty:
         return None
 
-    price_min = float(data['Low'].min())
-    price_max = float(data['High'].max())
-    last_close = float(data['Close'].iloc[-1])
-    data_range = price_max - price_min if price_max > price_min else 0.0
-
-    atr = None
-    try:
-        atr = float(indicators['ATR'].iloc[-1]) if 'ATR' in indicators else None
-    except Exception:
-        atr = None
-
-    # baseline choices tuned for SPY intraday moves
+    # Determine how many recent candles to use for Y-axis calculation
     if timeframe_label == '1m':
-        base = 0.8
+        recent_candles = 120  # 2 hours
     elif timeframe_label == '5m':
-        base = 2.5
-    else:
-        base = 4.0
-
-    if atr and atr > 0:
-        display_range = max(data_range, atr * 6, base)
-    else:
-        display_range = max(data_range, base)
-
-    half = display_range / 2.0
-    y0 = last_close - half
-    y1 = last_close + half
+        recent_candles = 78   # ~6.5 hours
+    else:  # 15m
+        recent_candles = 52   # ~13 hours (1 trading day)
+    
+    # Get recent data for Y-axis range calculation
+    recent_data = data.tail(recent_candles) if len(data) > recent_candles else data
+    recent_indicators = indicators.tail(recent_candles) if len(indicators) > recent_candles else indicators
+    
+    # Calculate Y-axis range including price AND indicators (VWAP, EMAs)
+    price_min = float(recent_data['Low'].min())
+    price_max = float(recent_data['High'].max())
+    
+    # Also consider indicator values to ensure they're visible
+    indicator_values = []
+    if 'VWAP' in recent_indicators and not recent_indicators['VWAP'].isna().all():
+        indicator_values.extend(recent_indicators['VWAP'].dropna().tolist())
+    if 'EMA_fast' in recent_indicators and not recent_indicators['EMA_fast'].isna().all():
+        indicator_values.extend(recent_indicators['EMA_fast'].dropna().tolist())
+    if 'EMA_slow' in recent_indicators and not recent_indicators['EMA_slow'].isna().all():
+        indicator_values.extend(recent_indicators['EMA_slow'].dropna().tolist())
+    
+    # Expand range to include indicators
+    if indicator_values:
+        price_min = min(price_min, min(indicator_values))
+        price_max = max(price_max, max(indicator_values))
+    
+    # Add minimal padding (1% on each side) for visual clarity
+    price_range = price_max - price_min
+    padding = price_range * 0.01 if price_range > 0 else 0.25
+    
+    y0 = price_min - padding
+    y1 = price_max + padding
 
     # Create 3 subplots: main chart, volume, MACD
     fig = make_subplots(
@@ -131,9 +145,16 @@ def _build_price_volume_figure(data, indicators, title, timeframe_label, ticker=
         subplot_titles=(title, f'{timeframe_label} Volume', 'MACD')
     )
 
-    # Format times for hover as 12-hour with AM/PM
+    # Format times for hover as 12-hour with AM/PM in display timezone (CST)
     try:
-        formatted_times = [dt.strftime('%b %d, %Y, %I:%M %p') if hasattr(dt, 'strftime') else str(dt) for dt in data.index]
+        formatted_times = []
+        for dt in data.index:
+            if hasattr(dt, 'strftime'):
+                # Convert to display timezone (Central Time)
+                dt_display = MarketHours.to_display_time(dt)
+                formatted_times.append(dt_display.strftime('%b %d, %Y, %I:%M %p CT'))
+            else:
+                formatted_times.append(str(dt))
     except Exception:
         formatted_times = [str(dt) for dt in data.index]
 
@@ -283,11 +304,11 @@ def _build_price_volume_figure(data, indicators, title, timeframe_label, ticker=
 
     fig.update_layout(
         template='plotly_dark', 
-        hovermode='x unified',  # Show all values at same time point
+        hovermode='x unified',
         showlegend=True,
         margin=dict(l=60, r=30, t=40, b=40), 
         autosize=True, 
-        height=900,  # Increased from 700 for MACD subplot
+        height=900,
         dragmode='zoom',
         modebar_add=['v1hovermode', 'toggleSpikelines'],
         # Better grid and tick behavior
@@ -296,7 +317,7 @@ def _build_price_volume_figure(data, indicators, title, timeframe_label, ticker=
             gridwidth=1,
             gridcolor='rgba(128, 128, 128, 0.2)',
             tickmode='auto',
-            nticks=20,  # More tick marks for better granularity
+            nticks=20,
             showspikes=True,
             spikemode='across',
             spikesnap='cursor',
@@ -308,7 +329,7 @@ def _build_price_volume_figure(data, indicators, title, timeframe_label, ticker=
             gridwidth=1,
             gridcolor='rgba(128, 128, 128, 0.2)',
             tickmode='auto',
-            nticks=15,  # More y-axis ticks for better price resolution
+            nticks=15,
             showspikes=True,
             spikemode='across',
             spikesnap='cursor',
@@ -316,8 +337,9 @@ def _build_price_volume_figure(data, indicators, title, timeframe_label, ticker=
             spikethickness=1
         )
     )
+    # Set tight Y-axis range for price chart based on recent data
     fig.update_yaxes(
-        range=[y0, y1], 
+        range=[y0, y1],
         row=1, col=1, 
         title_text='Price ($)',
         fixedrange=False,
@@ -344,7 +366,7 @@ def _build_price_volume_figure(data, indicators, title, timeframe_label, ticker=
     fig.update_xaxes(
         title_text='Time', 
         row=3, col=1, 
-        tickformat='%I:%M %p', 
+        tickformat='%I:%M %p',
         fixedrange=False,
         showgrid=True,
         gridwidth=1,
@@ -379,7 +401,11 @@ def create_chart(copilot_data, data_15m, indicators_15m, ticker="SPY", data_1m=N
         pcr = None
         gex = None
     
-    signals = SentimentAnalyzer().analyze_sentiment(data_5m, indicators_5m, bias_5m, bias_15m)
+    # Use new multi-timeframe signal logic
+    signals = generate_multi_timeframe_signals(
+        data_1m, data_5m, data_15m,
+        indicators_1m, indicators_5m, indicators_15m
+    )
     
     # Run backtest analysis
     backtester = SignalBacktester(lookforward_candles=5)
@@ -388,7 +414,11 @@ def create_chart(copilot_data, data_15m, indicators_15m, ticker="SPY", data_1m=N
 
     fig_1m = None
     if data_1m is not None and indicators_1m is not None:
+        print(f"[create_chart] Creating 1m chart with {len(data_1m)} candles")
         fig_1m = _build_price_volume_figure(data_1m, indicators_1m, f'{ticker} 1-Minute Chart', '1m', ticker, signals)
+        print(f"[create_chart] 1m chart created: {fig_1m is not None}")
+    else:
+        print(f"[create_chart] Skipping 1m chart - data_1m: {data_1m is not None}, indicators_1m: {indicators_1m is not None}")
 
     fig_5m = _build_price_volume_figure(data_5m, indicators_5m, f'{ticker} 5-Minute Chart', '5m', ticker, signals)
     fig_15m = _build_price_volume_figure(data_15m, indicators_15m, f'{ticker} 15-Minute Chart', '15m', ticker, signals)
@@ -406,58 +436,56 @@ def build_and_cache_payload(ticker="SPY"):
             _ticker_cache[ticker] = {'payload': None, 'cached_at': 0, 'is_building': False}
         
         if _ticker_cache[ticker]['is_building']:
+            print(f"[build_and_cache_payload] Already building for {ticker}, skipping")
             return
         _ticker_cache[ticker]['is_building'] = True
     
     try:
-        copilot = MarketCopilot(ticker=ticker)
+        copilot = MarketCopilot(ticker=ticker, request_delay=REQUEST_DELAY)
         
-        # Fetch all data in parallel using threading for faster response
-        import concurrent.futures
+        # Fetch data SEQUENTIALLY to respect rate limits
+        # Parallel fetching bypasses rate limiting and causes 429 errors
+        print(f"[{ticker}] Fetching 5m data...")
+        try:
+            data_5m = copilot.data_fetcher.fetch_data('5m', '5d')
+        except Exception as e:
+            print(f"[ERROR] Error fetching 5m data for {ticker}: {e}")
+            data_5m = None
         
-        def fetch_5m():
+        time.sleep(REQUEST_DELAY)  # Explicit delay between requests
+        
+        print(f"[{ticker}] Fetching 15m data...")
+        try:
+            data_15m = copilot.data_fetcher.fetch_data('15m', '1mo')
+        except Exception:
             try:
-                return copilot.data_fetcher.fetch_data('5m', '5d')
+                time.sleep(REQUEST_DELAY)
+                data_15m = copilot.data_fetcher.fetch_data('15m', '5d')
             except Exception as e:
-                print(f"Error fetching 5m data for {ticker}: {e}")
-                return None
+                print(f"[ERROR] Error fetching 15m data for {ticker}: {e}")
+                data_15m = None
         
-        def fetch_15m():
-            try:
-                return copilot.data_fetcher.fetch_data('15m', '1mo')
-            except Exception:
-                try:
-                    return copilot.data_fetcher.fetch_data('15m', '5d')
-                except Exception as e:
-                    print(f"Error fetching 15m data for {ticker}: {e}")
-                    return None
+        time.sleep(REQUEST_DELAY)  # Explicit delay between requests
         
-        def fetch_1m():
-            try:
-                return copilot.data_fetcher.fetch_data('1m', '1d')
-            except Exception as e:
-                print(f"Error fetching 1m data for {ticker}: {e}")
-                return None
-        
-        # Fetch all timeframes concurrently
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            future_5m = executor.submit(fetch_5m)
-            future_15m = executor.submit(fetch_15m)
-            future_1m = executor.submit(fetch_1m)
-            
-            data_5m = future_5m.result()
-            data_15m = future_15m.result()
-            data_1m = future_1m.result()
-        # Debug print statements for dataframes
-        print(f"[{ticker} 1m data] HEAD:\n", data_1m.head() if data_1m is not None else 'None')
-        print(f"[{ticker} 1m data] TAIL:\n", data_1m.tail() if data_1m is not None else 'None')
-        print(f"[{ticker} 5m data] HEAD:\n", data_5m.head() if data_5m is not None else 'None')
-        print(f"[{ticker} 5m data] TAIL:\n", data_5m.tail() if data_5m is not None else 'None')
-        print(f"[{ticker} 15m data] HEAD:\n", data_15m.head() if data_15m is not None else 'None')
-        print(f"[{ticker} 15m data] TAIL:\n", data_15m.tail() if data_15m is not None else 'None')
-
+        print(f"[{ticker}] Fetching 1m data...")
+        try:
+            data_1m = copilot.data_fetcher.fetch_data('1m', '1d')
+        except Exception as e:
+            print(f"[ERROR] Error fetching 1m data for {ticker}: {e}")
+            data_1m = None
+        # Check if we have critical data (5m minimum required)
         if data_5m is None or data_5m.empty:
-            print(f"No 5m data available for {ticker}")
+            print(f"[ERROR] No 5m data available for {ticker} - cannot build payload")
+            error_msg = "Rate limited or no data available. Using cached data if available."
+            with _cache_lock:
+                # Keep existing cached data if available, just update timestamp
+                if _ticker_cache[ticker]['payload'] is None or 'error' in _ticker_cache[ticker]['payload']:
+                    _ticker_cache[ticker]['payload'] = {
+                        'error': error_msg,
+                        'ticker': ticker,
+                        'retry_after': 60  # Suggest waiting 60 seconds
+                    }
+                _ticker_cache[ticker]['cached_at'] = time.time()
             return
         
         if data_15m is None or data_15m.empty:
@@ -478,8 +506,11 @@ def build_and_cache_payload(ticker="SPY"):
         # Process 1m data if available
         indicators_1m = None
         if data_1m is not None and not data_1m.empty:
+            print(f"[{ticker}] 1m data: {len(data_1m)} candles")
             data_1m = data_1m.tail(240)
             indicators_1m = calculate_all_indicators(data_1m, INDICATORS)
+        else:
+            print(f"[{ticker}] WARNING: No 1m data available")
 
         figs, walls, signals, iv_metrics, pcr, gex = create_chart(copilot_data, data_15m, indicators_15m, ticker=ticker, data_1m=data_1m, indicators_1m=indicators_1m)
 
@@ -530,8 +561,8 @@ def build_and_cache_payload(ticker="SPY"):
             'bias_5m': {'bias': bias_5m.value, 'confidence': conf_5m},
             'bias_15m': {'bias': bias_15m.value, 'confidence': conf_15m},
             'walls': walls[:5],
-            'signals': [{'timestamp': s['timestamp'].strftime('%Y-%m-%d %I:%M:%S %p'), 'price': s['price'], 'type': s['type'], 'strength': s['strength']} for s in signals[-10:]],
-            'timestamp': datetime.now().strftime('%Y-%m-%d %I:%M:%S %p'),
+            'signals': [{'timestamp': MarketHours.to_display_time(s['timestamp']).strftime('%Y-%m-%d %I:%M:%S %p CT'), 'price': s['price'], 'type': s['type'], 'strength': s['strength']} for s in signals[-10:]],
+            'timestamp': MarketHours.to_display_time(datetime.now(pytz.UTC)).strftime('%Y-%m-%d %I:%M:%S %p CT'),
             'indicators': {
                 'close': current_price,
                 'rsi': rsi_val,
@@ -563,12 +594,29 @@ def build_and_cache_payload(ticker="SPY"):
 
 
 def periodic_refresh():
+    """Background thread to refresh default ticker (SPY) data"""
+    failed_attempts = 0
     while True:
         try:
+            # Check if we're rate limited (have an error payload)
+            with _cache_lock:
+                current_payload = _ticker_cache.get('SPY', {}).get('payload')
+                if current_payload and 'error' in current_payload:
+                    # We're rate limited, wait longer
+                    wait_time = min(300, CACHE_TTL * (2 ** failed_attempts))  # Max 5 minutes
+                    print(f"[periodic_refresh] Rate limited, waiting {wait_time}s before retry")
+                    time.sleep(wait_time)
+                    failed_attempts += 1
+                else:
+                    # Normal refresh
+                    failed_attempts = 0
+                    time.sleep(CACHE_TTL)
+            
             build_and_cache_payload()
-        except Exception:
-            pass
-        time.sleep(CACHE_TTL)
+        except Exception as e:
+            print(f"[periodic_refresh] Error: {e}")
+            failed_attempts += 1
+            time.sleep(CACHE_TTL * 2)  # Wait longer on error
 
 
 @app.route('/')
@@ -607,8 +655,9 @@ def get_analysis_debug():
         start = max(0, len(data_5m) - N)
         for i in range(start, len(data_5m)):
             ts = data_5m.index[i]
+            ts_display = MarketHours.to_display_time(ts)
             rows.append({
-                'timestamp': pd.Timestamp(ts).strftime('%Y-%m-%d %H:%M:%S'),
+                'timestamp': ts_display.strftime('%Y-%m-%d %I:%M:%S %p CT'),
                 'open': float(data_5m['Open'].iloc[i]),
                 'high': float(data_5m['High'].iloc[i]),
                 'low': float(data_5m['Low'].iloc[i]),
@@ -634,49 +683,48 @@ def get_analysis():
         with _cache_lock:
             if ticker in _ticker_cache:
                 cache_entry = _ticker_cache[ticker]
-                if cache_entry['payload'] and (time.time() - cache_entry['cached_at']) < CACHE_TTL:
-                    return jsonify(cache_entry['payload'])
+                payload = cache_entry['payload']
+                cache_age = time.time() - cache_entry['cached_at']
+                
+                # If we have an error payload (rate limited), return it with retry hint
+                if payload and 'error' in payload:
+                    payload['cache_age'] = int(cache_age)
+                    return jsonify(payload), 429  # Return 429 Too Many Requests
+                
+                # Return fresh cached data
+                if payload and cache_age < CACHE_TTL:
+                    return jsonify(payload)
+                
+                # Cache exists but stale - if we're currently building, return stale data
+                if payload and cache_entry['is_building']:
+                    payload['stale'] = True
+                    payload['cache_age'] = int(cache_age)
+                    return jsonify(payload)
 
         # Build on-demand if cache empty or stale
         build_and_cache_payload(ticker)
 
-        # Wait for build to complete (up to 5 seconds)
+        # Wait for build to complete (up to 20 seconds to account for rate limits)
         wait_start = time.time()
         while True:
             with _cache_lock:
-                if ticker in _ticker_cache and _ticker_cache[ticker]['payload']:
-                    break
-            if time.time() - wait_start > 5:
+                if ticker in _ticker_cache:
+                    payload = _ticker_cache[ticker]['payload']
+                    if payload:
+                        # Return even if error - frontend will handle it
+                        if 'error' in payload:
+                            return jsonify(payload), 429
+                        return jsonify(payload)
+            if time.time() - wait_start > 20:
                 break
-            time.sleep(0.2)
+            time.sleep(0.5)
 
-        with _cache_lock:
-            if ticker in _ticker_cache and _ticker_cache[ticker]['payload']:
-                resp = dict(_ticker_cache[ticker]['payload'])
-            else:
-                # Return a safe, minimal payload to avoid 500s on first-hit
-                # (frontend will still show loading/placeholder values).
-                resp = {
-                    'chart_1m': None,
-                    'chart_5m': None,
-                    'chart_15m': None,
-                    'bias_5m': {'bias': 'Unknown', 'confidence': 0.0},
-                    'bias_15m': {'bias': 'Unknown', 'confidence': 0.0},
-                    'walls': [],
-                    'signals': [],
-                    'timestamp': datetime.now().strftime('%Y-%m-%d %I:%M:%S %p'),
-                    'indicators': {'close': None, 'rsi': None},
-                    'gamma_score': 0,
-                }
-
-        # Enrich with market status / latest timestamps
-        try:
-            from market_hours import MarketHours
-            resp['market_status'] = MarketHours.get_market_status()
-        except Exception:
-            resp['market_status'] = {'status': 'Unknown', 'is_open': False}
-
-        return jsonify(resp)
+        # Timeout waiting for data
+        return jsonify({
+            'error': 'Timeout waiting for data. Server may be rate limited.',
+            'retry_after': 60
+        }), 503
+    
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -696,12 +744,29 @@ if __name__ == '__main__':
     print('  MARKET COPILOT - Web Interface')
     print('  Starting Flask server...')
     print('=' * 80)
-    print(f"\n📊 Access the dashboard at: http://localhost:{port}")
+    print(f"\nAccess the dashboard at: http://localhost:{port}\n")
+    
+    # Pre-cache SPY data on startup to avoid slow first load
+    print("[STARTUP] Pre-caching SPY data...")
+    try:
+        cache_thread = threading.Thread(target=build_and_cache_payload, args=('SPY',), daemon=True)
+        cache_thread.start()
+        print("[STARTUP] Cache warming started in background")
+    except Exception as e:
+        print(f"[WARNING] Could not start cache warming: {e}")
 
     try:
         refresher = threading.Thread(target=periodic_refresh, daemon=True)
         refresher.start()
-    except Exception:
-        pass
+        print("[OK] Background refresh thread started")
+    except Exception as e:
+        print(f"[ERROR] Error starting background thread: {e}")
+        import traceback
+        traceback.print_exc()
 
-    app.run(debug=True, host='0.0.0.0', port=port)
+    try:
+        app.run(debug=True, host='0.0.0.0', port=port, use_reloader=False)
+    except Exception as e:
+        print(f"[ERROR] Flask server error: {e}")
+        import traceback
+        traceback.print_exc()

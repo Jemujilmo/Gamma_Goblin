@@ -1,5 +1,11 @@
 """
 Bias classifier module - Determines market bias and confidence
+
+⚠️ DEPRECATED: This file is no longer used in production.
+The new signal logic in new_signal_logic.py directly evaluates VWAP positioning,
+EMA crossovers, and MACD momentum without separate bias classification.
+
+This file remains for backward compatibility with test files.
 """
 import pandas as pd
 from typing import Dict, Tuple, List
