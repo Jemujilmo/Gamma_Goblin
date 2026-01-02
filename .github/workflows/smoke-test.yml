@@ -39,10 +39,30 @@ jobs:
             exit 1
           fi
 
-      - name: Wait for /api/analysis (timeout 20s)
+      - name: Wait for Flask to start (health check)
         run: |
           elapsed=0
-          max_wait=20
+          max_wait=10
+          code=000
+          while [ $elapsed -lt $max_wait ]; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5050/health || echo 000)
+            if [ "$code" = "200" ]; then
+              echo "Flask health check passed after ${elapsed}s"
+              break
+            fi
+            sleep 1
+            elapsed=$((elapsed + 1))
+          done
+          if [ "$code" != "200" ]; then
+            echo "Flask did not start after ${max_wait}s" >&2
+            cat dashboard.log
+            exit 1
+          fi
+
+      - name: Wait for /api/analysis (timeout 30s)
+        run: |
+          elapsed=0
+          max_wait=30
           code=000
           while [ $elapsed -lt $max_wait ]; do
             code=$(curl -s -o /tmp/api.json -w "%{http_code}" http://127.0.0.1:5050/api/analysis || echo 000)

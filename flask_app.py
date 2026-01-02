@@ -631,6 +631,12 @@ def indicator():
     return render_template('indicator.html')
 
 
+@app.route('/health')
+def health():
+    """Simple health check endpoint - no data fetching required"""
+    return jsonify({'status': 'ok', 'timestamp': time.time()})
+
+
 @app.route('/api/tickers')
 def get_tickers():
     """Return list of available tickers for dropdown"""
