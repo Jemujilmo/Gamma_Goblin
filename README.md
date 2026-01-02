@@ -53,6 +53,12 @@ Copy this command and paste it into PowerShell:
 
 Press **Enter**
 
+**Note about ports:** By default, the program runs on port 5000. If you need to use a different port (e.g., if something else is using port 5000), you can specify it:
+```powershell
+.\.venv\Scripts\python.exe flask_app.py --port=5050
+```
+Then access the dashboard at http://localhost:5050 instead of http://localhost:5000
+
 You'll see text scroll by. **Watch for these important messages:**
 ```
 Access the dashboard at: http://localhost:5000
